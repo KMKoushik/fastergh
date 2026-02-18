@@ -16,50 +16,55 @@ const testSchema = defineSchema({
 
 const factory = createRpcFactory({ schema: testSchema });
 
+// Define endpoints
+const addEndpoint = factory.mutation({
+	payload: { author: Schema.String, message: Schema.String },
+	success: Schema.String,
+});
+addEndpoint.implement((payload) =>
+	Effect.gen(function* () {
+		return `Added message from ${payload.author}`;
+	}),
+);
+
+const listEndpoint = factory.query({
+	success: Schema.Array(Schema.Struct({ author: Schema.String, message: Schema.String })),
+});
+listEndpoint.implement(() =>
+	Effect.gen(function* () {
+		return [{ author: "Alice", message: "Hello" }];
+	}),
+);
+
+const getEndpoint = factory.query({
+	payload: { id: Schema.String },
+	success: Schema.Struct({ author: Schema.String, message: Schema.String }),
+	error: Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+});
+getEndpoint.implement((payload) =>
+	Effect.gen(function* () {
+		if (payload.id === "not-found") {
+			return yield* Effect.fail({ _tag: "NotFound" as const });
+		}
+		return { author: "Bob", message: "Test" };
+	}),
+);
+
+const sendNotificationEndpoint = factory.action({
+	payload: { userId: Schema.String },
+	success: Schema.Struct({ sent: Schema.Boolean }),
+});
+sendNotificationEndpoint.implement((_payload) =>
+	Effect.gen(function* () {
+		return { sent: true };
+	}),
+);
+
 const guestbookModule = makeRpcModule({
-	add: factory.mutation(
-		{
-			payload: { author: Schema.String, message: Schema.String },
-			success: Schema.String,
-		},
-		(payload) =>
-			Effect.gen(function* () {
-				return `Added message from ${payload.author}`;
-			}),
-	),
-	list: factory.query(
-		{
-			success: Schema.Array(Schema.Struct({ author: Schema.String, message: Schema.String })),
-		},
-		() =>
-			Effect.gen(function* () {
-				return [{ author: "Alice", message: "Hello" }];
-			}),
-	),
-	get: factory.query(
-		{
-			payload: { id: Schema.String },
-			success: Schema.Struct({ author: Schema.String, message: Schema.String }),
-			error: Schema.Struct({ _tag: Schema.Literal("NotFound") }),
-		},
-		(payload) =>
-			Effect.gen(function* () {
-				if (payload.id === "not-found") {
-					return yield* Effect.fail({ _tag: "NotFound" as const });
-				}
-				return { author: "Bob", message: "Test" };
-			}),
-	),
-	sendNotification: factory.action(
-		{
-			payload: { userId: Schema.String },
-			success: Schema.Struct({ sent: Schema.Boolean }),
-		},
-		(_payload) =>
-			Effect.gen(function* () {
-				return { sent: true };
-			}),
-	),
+	add: addEndpoint,
+	list: listEndpoint,
+	get: getEndpoint,
+	sendNotification: sendNotificationEndpoint,
 });
 
 describe("RPC Client", () => {

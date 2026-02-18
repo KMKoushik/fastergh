@@ -118,6 +118,31 @@ export interface RpcEndpoint<
 	readonly fn: ConvexFn;
 }
 
+// ---------------------------------------------------------------------------
+// Handler ref — mutable slot filled by .implement()
+// ---------------------------------------------------------------------------
+
+type HandlerFn = (payload: never) => Effect.Effect<unknown, unknown, unknown>;
+
+interface HandlerRef {
+	current: HandlerFn | null;
+	tag: string | null;
+}
+
+const createHandlerRef = (): HandlerRef => ({ current: null, tag: null });
+
+// ---------------------------------------------------------------------------
+// UnbuiltRpcEndpoint — definition only, no handler body
+// ---------------------------------------------------------------------------
+
+/**
+ * An endpoint whose schema has been defined but whose handler may or may not
+ * be wired yet. Call `.implement(handler)` to provide the implementation.
+ *
+ * The handler is stored in a mutable ref so that the definition file (which
+ * `api.d.ts` imports) never needs to contain handler code. The implementation
+ * can live in a separate file, breaking circular type dependencies.
+ */
 export interface UnbuiltRpcEndpoint<
 	PayloadFields extends Schema.Struct.Fields,
 	Success extends Schema.Schema.AnyNoContext,
@@ -131,13 +156,26 @@ export interface UnbuiltRpcEndpoint<
 	readonly successSchema: Success;
 	readonly errorSchema: Error | undefined;
 	readonly middlewares: Middlewares;
-	readonly handler: (
-		payload: Schema.Struct.Type<PayloadFields>,
-	) => Effect.Effect<Schema.Schema.Type<Success>, Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never, unknown>;
 	readonly build: (tag: string, middlewareConfig: MiddlewareConfig | undefined) => RpcEndpoint<string, Rpc.Any, ConvexFnType>;
 	middleware<M extends RpcMiddleware.TagClassAny>(
 		middleware: M,
 	): UnbuiltRpcEndpoint<PayloadFields, Success, Error, ConvexFnType, [...Middlewares, M]>;
+
+	/**
+	 * Wire the handler implementation for this endpoint.
+	 *
+	 * Can be called from a separate file to avoid circular type dependencies
+	 * with Convex's generated `api.d.ts`.
+	 */
+	implement(
+		handler: (
+			payload: Schema.Struct.Type<PayloadFields>,
+		) => Effect.Effect<
+			Schema.Schema.Type<Success>,
+			Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never,
+			unknown
+		>,
+	): void;
 }
 
 export interface RpcFactoryConfig<
@@ -207,7 +245,7 @@ export const createRpcFactory = <
 
 	type MergedPayload<P extends Schema.Struct.Fields> = BasePayload & P;
 
-	const makeHandler = <
+	const makeConvexHandler = <
 		PayloadFields extends Schema.Struct.Fields,
 		Success extends Schema.Schema.AnyNoContext,
 		Error extends Schema.Schema.AnyNoContext | undefined,
@@ -219,7 +257,7 @@ export const createRpcFactory = <
 		successSchema: Success,
 		errorSchema: Error,
 		middlewareConfig: MiddlewareConfig | undefined,
-		handler: (payload: Schema.Struct.Type<PayloadFields>) => Effect.Effect<Schema.Schema.Type<Success>, Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never, unknown>,
+		handlerRef: HandlerRef,
 	) => {
 		const payloadSchema = Schema.Struct(payloadFields) as unknown as Schema.Schema<Schema.Struct.Type<PayloadFields>, Schema.Struct.Encoded<PayloadFields>, never>;
 		const decodePayload = Schema.decodeUnknownSync(payloadSchema);
@@ -234,6 +272,12 @@ export const createRpcFactory = <
 		const rpcInfo: RpcInfo = { tag, kind: endpointConfig.kind };
 
 		return async (rawCtx: ConvexCtx, args: unknown): Promise<ExitEncoded> => {
+			if (!handlerRef.current) {
+				throw new Error(
+					`Handler not implemented for "${tag}". Call .implement() on the endpoint definition.`,
+				);
+			}
+			const handler = handlerRef.current;
 			const parentSpan = extractParentSpanFromPayload(args);
 
 			let decodedArgs: Schema.Struct.Type<PayloadFields>;
@@ -254,7 +298,7 @@ export const createRpcFactory = <
 					? yield* executeMiddlewares(middlewareConfig.implementations, middlewareOptions)
 					: Context.empty();
 
-				const handlerEffect = handler(decodedArgs);
+				const handlerEffect = handler(decodedArgs as never);
 				const withMiddlewareCtx = Effect.provide(handlerEffect, middlewareCtx);
 				const withConfectCtx = Effect.provideService(
 					withMiddlewareCtx as Effect.Effect<Schema.Schema.Type<Success>, unknown, Ctx>,
@@ -312,7 +356,7 @@ export const createRpcFactory = <
 		successSchema: Success,
 		errorSchema: Error | undefined,
 		middlewares: Middlewares,
-		handler: (payload: Schema.Struct.Type<PayloadFields>) => Effect.Effect<Schema.Schema.Type<Success>, Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never, unknown>,
+		handlerRef: HandlerRef,
 	): UnbuiltRpcEndpoint<PayloadFields, Success, Error, ConvexFnType, Middlewares> => ({
 		__unbuilt: true as const,
 		kind: endpointConfig.kind,
@@ -320,15 +364,15 @@ export const createRpcFactory = <
 		successSchema: successSchema,
 		errorSchema: errorSchema,
 		middlewares,
-		handler,
 		build: (tag, middlewareConfig): RpcEndpoint<string, Rpc.Any, ConvexFnType> => {
+			handlerRef.tag = tag;
 			const rpc = Rpc.make(tag, {
 				payload: mergedPayload,
 				success: successSchema,
 				error: errorSchema,
 			});
-			const handlerFn = makeHandler(endpointConfig, tag, mergedPayload, successSchema, errorSchema, middlewareConfig, handler);
-			const fn = endpointConfig.registrar({ args: v.any(), handler: handlerFn });
+			const convexHandler = makeConvexHandler(endpointConfig, tag, mergedPayload, successSchema, errorSchema, middlewareConfig, handlerRef);
+			const fn = endpointConfig.registrar({ args: v.any(), handler: convexHandler });
 			return { _tag: tag, rpc, fn: fn as ConvexFnType };
 		},
 		middleware<M extends RpcMiddleware.TagClassAny>(
@@ -341,36 +385,49 @@ export const createRpcFactory = <
 				successSchema,
 				errorSchema,
 				newMiddlewares,
-				handler,
+				handlerRef,
 			);
+		},
+		implement(
+			handler: (
+				payload: Schema.Struct.Type<PayloadFields>,
+			) => Effect.Effect<
+				Schema.Schema.Type<Success>,
+				Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never,
+				unknown
+			>,
+		): void {
+			handlerRef.current = handler as HandlerFn;
 		},
 	});
 
+	/**
+	 * Create an endpoint definition method. The returned function takes only
+	 * schemas (no handler). Call `.implement(handler)` on the result to wire
+	 * the handler, potentially from a separate file.
+	 */
 	const createEndpointMethod = <Ctx, ConvexFnType>(
 		endpointConfig: EndpointConfig<Ctx, ConvexFnType>,
 	) => <
 		PayloadFields extends Schema.Struct.Fields = {},
 		Success extends Schema.Schema.AnyNoContext = typeof Schema.Void,
 		Error extends Schema.Schema.AnyNoContext | undefined = undefined,
-		R = never,
 	>(
 		options: {
 			readonly payload?: PayloadFields;
 			readonly success: Success;
 			readonly error?: Error;
 		},
-		handler: (
-			payload: Schema.Struct.Type<MergedPayload<PayloadFields>>,
-		) => Effect.Effect<Schema.Schema.Type<Success>, Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never, Ctx | R>,
 	): UnbuiltRpcEndpoint<MergedPayload<PayloadFields>, Success, Error, ConvexFnType, BaseMiddlewares> => {
 		const mergedPayload = { ...basePayload, ...options.payload } as MergedPayload<PayloadFields>;
+		const handlerRef = createHandlerRef();
 		return createUnbuiltEndpoint(
 			endpointConfig,
 			mergedPayload,
 			options.success,
 			options.error,
 			baseMiddlewares as unknown as BaseMiddlewares,
-			handler as (payload: Schema.Struct.Type<MergedPayload<PayloadFields>>) => Effect.Effect<Schema.Schema.Type<Success>, Error extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<Error> : never, unknown>,
+			handlerRef,
 		);
 	};
 
@@ -463,9 +520,14 @@ interface AnyUnbuiltEndpoint {
 	readonly successSchema: Schema.Schema.AnyNoContext;
 	readonly errorSchema: Schema.Schema.AnyNoContext | undefined;
 	readonly middlewares: ReadonlyArray<RpcMiddleware.TagClassAny>;
-	readonly handler: (payload: never) => Effect.Effect<unknown, unknown, unknown>;
 	readonly build: (tag: string, middlewareConfig: MiddlewareConfig | undefined) => RpcEndpoint<string, Rpc.Any, unknown>;
 	middleware<M extends RpcMiddleware.TagClassAny>(middleware: M): AnyUnbuiltEndpoint;
+	// Variance note: `implement` sits in covariant position (method), its handler
+	// parameter is contravariant, and the handler's `payload` is again contravariant
+	// — making `payload` doubly contravariant = covariant overall. So for
+	// `AnyUnbuiltEndpoint` to be a proper supertype of all concrete endpoints,
+	// `payload` must be a supertype of all concrete payload types → `unknown`.
+	implement(handler: (payload: unknown) => Effect.Effect<unknown, unknown, unknown>): void;
 }
 
 type BuiltEndpoint<K extends string, U> = U extends UnbuiltRpcEndpoint<

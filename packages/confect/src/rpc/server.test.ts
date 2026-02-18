@@ -68,6 +68,15 @@ const assertFailure = (exit: ExitEncoded): FailureExit => {
 	return exit as FailureExit;
 };
 
+/** Helper: define + immediately implement an endpoint (convenience for tests) */
+const withImpl = <T extends { implement: (handler: (...args: ReadonlyArray<never>) => Effect.Effect<never, never, never>) => void }>(
+	endpoint: T,
+	handler: Parameters<T["implement"]>[0],
+): T => {
+	endpoint.implement(handler);
+	return endpoint;
+};
+
 describe("RPC Server", () => {
 	describe("createRpcFactory", () => {
 		it("creates a factory with query, mutation, and action methods", () => {
@@ -85,9 +94,7 @@ describe("RPC Server", () => {
 			it("creates a query endpoint with success schema", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.query({ success: Schema.String }, () =>
-					Effect.succeed("hello"),
-				);
+				const endpoint = factory.query({ success: Schema.String });
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.kind).toBe("query");
@@ -97,13 +104,10 @@ describe("RPC Server", () => {
 			it("creates a query endpoint with payload", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.query(
-					{
-						payload: { name: Schema.String },
-						success: Schema.String,
-					},
-					(args) => Effect.succeed(`Hello, ${args.name}`),
-				);
+				const endpoint = factory.query({
+					payload: { name: Schema.String },
+					success: Schema.String,
+				});
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.payloadFields).toHaveProperty("name");
@@ -117,13 +121,10 @@ describe("RPC Server", () => {
 
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.query(
-					{
-						success: Schema.String,
-						error: CustomError,
-					},
-					() => Effect.fail(new CustomError({ message: "test" })),
-				);
+				const endpoint = factory.query({
+					success: Schema.String,
+					error: CustomError,
+				});
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.errorSchema).toBe(CustomError);
@@ -134,13 +135,10 @@ describe("RPC Server", () => {
 			it("creates a mutation endpoint", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.mutation(
-					{
-						payload: { value: Schema.Number },
-						success: Schema.Boolean,
-					},
-					(args) => Effect.succeed(args.value > 0),
-				);
+				const endpoint = factory.mutation({
+					payload: { value: Schema.Number },
+					success: Schema.Boolean,
+				});
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.kind).toBe("mutation");
@@ -151,10 +149,7 @@ describe("RPC Server", () => {
 			it("creates an action endpoint", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.action(
-					{ success: Schema.Void },
-					() => Effect.void,
-				);
+				const endpoint = factory.action({ success: Schema.Void });
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.kind).toBe("action");
@@ -165,10 +160,7 @@ describe("RPC Server", () => {
 			it("creates internal query endpoint", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.internalQuery(
-					{ success: Schema.Number },
-					() => Effect.succeed(42),
-				);
+				const endpoint = factory.internalQuery({ success: Schema.Number });
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.kind).toBe("internalQuery");
@@ -177,10 +169,7 @@ describe("RPC Server", () => {
 			it("creates internal mutation endpoint", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.internalMutation(
-					{ success: Schema.Void },
-					() => Effect.void,
-				);
+				const endpoint = factory.internalMutation({ success: Schema.Void });
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.kind).toBe("internalMutation");
@@ -189,10 +178,7 @@ describe("RPC Server", () => {
 			it("creates internal action endpoint", () => {
 				const factory = createRpcFactory({ schema: testSchema });
 
-				const endpoint = factory.internalAction(
-					{ success: Schema.String },
-					() => Effect.succeed("internal"),
-				);
+				const endpoint = factory.internalAction({ success: Schema.String });
 
 				expect(endpoint.__unbuilt).toBe(true);
 				expect(endpoint.kind).toBe("internalAction");
@@ -204,15 +190,16 @@ describe("RPC Server", () => {
 		it("builds endpoints with correct tags", () => {
 			const factory = createRpcFactory({ schema: testSchema });
 
-			const module = makeRpcModule({
-				getItems: factory.query({ success: Schema.Array(Schema.String) }, () =>
-					Effect.succeed([]),
-				),
-				addItem: factory.mutation(
-					{ payload: { name: Schema.String }, success: Schema.String },
-					(args) => Effect.succeed(args.name),
-				),
+			const getItems = factory.query({ success: Schema.Array(Schema.String) });
+			getItems.implement(() => Effect.succeed([]));
+
+			const addItem = factory.mutation({
+				payload: { name: Schema.String },
+				success: Schema.String,
 			});
+			addItem.implement((args) => Effect.succeed(args.name));
+
+			const module = makeRpcModule({ getItems, addItem });
 
 			expect(module.getItems._tag).toBe("getItems");
 			expect(module.addItem._tag).toBe("addItem");
@@ -221,12 +208,13 @@ describe("RPC Server", () => {
 		it("provides handlers for each endpoint", () => {
 			const factory = createRpcFactory({ schema: testSchema });
 
-			const module = makeRpcModule({
-				echo: factory.query(
-					{ payload: { message: Schema.String }, success: Schema.String },
-					(args) => Effect.succeed(args.message),
-				),
+			const echo = factory.query({
+				payload: { message: Schema.String },
+				success: Schema.String,
 			});
+			echo.implement((args) => Effect.succeed(args.message));
+
+			const module = makeRpcModule({ echo });
 
 			expect(module.handlers.echo).toBeDefined();
 		});
@@ -234,9 +222,10 @@ describe("RPC Server", () => {
 		it("provides rpcs for each endpoint", () => {
 			const factory = createRpcFactory({ schema: testSchema });
 
-			const module = makeRpcModule({
-				myQuery: factory.query({ success: Schema.Void }, () => Effect.void),
-			});
+			const myQuery = factory.query({ success: Schema.Void });
+			myQuery.implement(() => Effect.void);
+
+			const module = makeRpcModule({ myQuery });
 
 			expect(module.rpcs.myQuery).toBeDefined();
 		});
@@ -244,14 +233,13 @@ describe("RPC Server", () => {
 		it("provides a group for all rpcs", () => {
 			const factory = createRpcFactory({ schema: testSchema });
 
-			const module = makeRpcModule({
-				first: factory.query({ success: Schema.String }, () =>
-					Effect.succeed("1"),
-				),
-				second: factory.query({ success: Schema.Number }, () =>
-					Effect.succeed(2),
-				),
-			});
+			const first = factory.query({ success: Schema.String });
+			first.implement(() => Effect.succeed("1"));
+
+			const second = factory.query({ success: Schema.Number });
+			second.implement(() => Effect.succeed(2));
+
+			const module = makeRpcModule({ first, second });
 
 			expect(module.group).toBeDefined();
 		});
@@ -266,17 +254,15 @@ describe("RPC Server", () => {
 				},
 			});
 
-			const endpoint = factory.query(
-				{
-					payload: { itemId: Schema.String },
-					success: Schema.Void,
-				},
-				(args) => {
-					expect(args.tenantId).toBeDefined();
-					expect(args.itemId).toBeDefined();
-					return Effect.void;
-				},
-			);
+			const endpoint = factory.query({
+				payload: { itemId: Schema.String },
+				success: Schema.Void,
+			});
+			endpoint.implement((args) => {
+				expect(args.tenantId).toBeDefined();
+				expect(args.itemId).toBeDefined();
+				return Effect.void;
+			});
 
 			expect(endpoint.payloadFields).toHaveProperty("tenantId");
 			expect(endpoint.payloadFields).toHaveProperty("itemId");
@@ -287,11 +273,10 @@ describe("RPC Server", () => {
 		const factory = createRpcFactory({ schema: testSchema });
 
 		it("encodes success correctly", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.String }, () =>
-					Effect.succeed("hello"),
-				),
-			});
+			const test = factory.query({ success: Schema.String });
+			test.implement(() => Effect.succeed("hello"));
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -306,12 +291,10 @@ describe("RPC Server", () => {
 				code: Schema.Number,
 			}) {}
 
-			const module = makeRpcModule({
-				test: factory.query(
-					{ success: Schema.String, error: TestError },
-					() => Effect.fail(new TestError({ code: 500 })),
-				),
-			});
+			const test = factory.query({ success: Schema.String, error: TestError });
+			test.implement(() => Effect.fail(new TestError({ code: 500 })));
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -325,11 +308,10 @@ describe("RPC Server", () => {
 		});
 
 		it("encodes defects (thrown errors) correctly", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () =>
-					Effect.die(new Error("unexpected error")),
-				),
-			});
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() => Effect.die(new Error("unexpected error")));
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -346,12 +328,13 @@ describe("RPC Server", () => {
 		});
 
 		it("handles payload decode errors as defects", async () => {
-			const module = makeRpcModule({
-				test: factory.query(
-					{ payload: { num: Schema.Number }, success: Schema.Void },
-					() => Effect.void,
-				),
+			const test = factory.query({
+				payload: { num: Schema.Number },
+				success: Schema.Void,
 			});
+			test.implement(() => Effect.void);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -371,14 +354,15 @@ describe("RPC Server", () => {
 				name: Schema.String,
 			});
 
-			const module = makeRpcModule({
-				getItems: factory.query({ success: Schema.Array(ItemSchema) }, () =>
-					Effect.succeed([
-						{ id: "1", name: "Item 1" },
-						{ id: "2", name: "Item 2" },
-					]),
-				),
-			});
+			const getItems = factory.query({ success: Schema.Array(ItemSchema) });
+			getItems.implement(() =>
+				Effect.succeed([
+					{ id: "1", name: "Item 1" },
+					{ id: "2", name: "Item 2" },
+				]),
+			);
+
+			const module = makeRpcModule({ getItems });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.getItems);
@@ -404,16 +388,16 @@ describe("RPC Server", () => {
 
 			const ErrorSchema = Schema.Union(NotFoundError, ForbiddenError);
 
-			const module = makeRpcModule({
-				getItem: factory.query(
-					{
-						payload: { id: Schema.String },
-						success: Schema.Void,
-						error: ErrorSchema,
-					},
-					(args) => Effect.fail(new NotFoundError({ id: args.id })),
-				),
+			const getItem = factory.query({
+				payload: { id: Schema.String },
+				success: Schema.Void,
+				error: ErrorSchema,
 			});
+			getItem.implement((args) =>
+				Effect.fail(new NotFoundError({ id: args.id })),
+			);
+
+			const module = makeRpcModule({ getItem });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.getItem);
@@ -427,25 +411,23 @@ describe("RPC Server", () => {
 		});
 
 		it("handles optional fields in payload", async () => {
-			const module = makeRpcModule({
-				search: factory.query(
-					{
-						payload: {
-							query: Schema.String,
-							limit: Schema.optional(Schema.Number),
-						},
-						success: Schema.Array(Schema.String),
-					},
-					(args) => {
-						const limit = args.limit ?? 10;
-						return Effect.succeed(
-							Array(limit)
-								.fill(null)
-								.map((_, i) => `${args.query}-${i}`),
-						);
-					},
-				),
+			const search = factory.query({
+				payload: {
+					query: Schema.String,
+					limit: Schema.optional(Schema.Number),
+				},
+				success: Schema.Array(Schema.String),
 			});
+			search.implement((args) => {
+				const limit = args.limit ?? 10;
+				return Effect.succeed(
+					Array(limit)
+						.fill(null)
+						.map((_, i) => `${args.query}-${i}`),
+				);
+			});
+
+			const module = makeRpcModule({ search });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.search);
@@ -486,16 +468,17 @@ describe("RPC Server", () => {
 			{ id: "user-123", name: "Test User" },
 		);
 
+		const whoami = factory.query({ success: Schema.String });
+		whoami.implement(() =>
+			Effect.gen(function* () {
+				const user = yield* CurrentUser;
+				return `Hello, ${user.name}!`;
+			}),
+		);
+
 		const module = makeRpcModule(
 			{
-				whoami: factory
-					.query({ success: Schema.String }, () =>
-						Effect.gen(function* () {
-							const user = yield* CurrentUser;
-							return `Hello, ${user.name}!`;
-						}),
-					)
-					.middleware(AuthMiddleware),
+				whoami: whoami.middleware(AuthMiddleware),
 			},
 			{ middlewares: CurrentUserLive },
 		);
@@ -518,18 +501,21 @@ describe("RPC Server", () => {
 			{ id: "user-123", name: "Test User" },
 		);
 
+		const test = factory.query({
+			payload: { itemId: Schema.String },
+			success: Schema.String,
+		});
+		test.implement((args) =>
+			Effect.gen(function* () {
+				receivedItemId = args.itemId;
+				const user = yield* CurrentUser;
+				return `${user.name} accessed ${args.itemId}`;
+			}),
+		);
+
 		const module = makeRpcModule(
 			{
-				test: factory
-					.query(
-						{ payload: { itemId: Schema.String }, success: Schema.String },
-						(args) => Effect.gen(function* () {
-							receivedItemId = args.itemId;
-							const user = yield* CurrentUser;
-							return `${user.name} accessed ${args.itemId}`;
-						}),
-					)
-					.middleware(AuthMiddleware),
+				test: test.middleware(AuthMiddleware),
 			},
 			{ middlewares: CurrentUserLive },
 		);
@@ -560,16 +546,20 @@ describe("RPC Server", () => {
 
 		const FailingAuthLive = Layer.fail(new AuthError({ reason: "Invalid token" }));
 
+		const protectedEndpoint = factory.query({
+			success: Schema.String,
+			error: AuthError,
+		});
+		protectedEndpoint.implement(() =>
+			Effect.gen(function* () {
+				yield* CurrentUser;
+				return "secret";
+			}),
+		);
+
 		const module = makeRpcModule(
 			{
-				protected: factory
-					.query({ success: Schema.String, error: AuthError }, () =>
-						Effect.gen(function* () {
-							yield* CurrentUser;
-							return "secret";
-						}),
-					)
-					.middleware(FailingAuthMiddleware),
+				protected: protectedEndpoint.middleware(FailingAuthMiddleware),
 			},
 			{ middlewares: FailingAuthLive },
 		);
@@ -611,17 +601,19 @@ describe("RPC Server", () => {
 
 		const ServicesLive = Layer.mergeAll(CurrentUserLive, LoggerLive);
 
+		const test = factory.query({ success: Schema.String });
+		test.implement(() =>
+			Effect.gen(function* () {
+				const user = yield* CurrentUser;
+				const logger = yield* Logger;
+				logger.log("accessed");
+				return user.name;
+			}),
+		);
+
 		const module = makeRpcModule(
 			{
-				test: factory
-					.query({ success: Schema.String }, () =>
-						Effect.gen(function* () {
-							const user = yield* CurrentUser;
-							const logger = yield* Logger;
-							logger.log("accessed");
-							return user.name;
-						}),
-					)
+				test: test
 					.middleware(AuthMiddleware)
 					.middleware(LoggerMiddleware),
 			},
@@ -640,11 +632,10 @@ describe("RPC Server", () => {
 		it("works without any middleware", async () => {
 			const factory = createRpcFactory({ schema: testSchema });
 
-			const module = makeRpcModule({
-				simple: factory.query({ success: Schema.Number }, () =>
-					Effect.succeed(42),
-				),
-			});
+			const simple = factory.query({ success: Schema.Number });
+			simple.implement(() => Effect.succeed(42));
+
+			const module = makeRpcModule({ simple });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.simple);
@@ -659,13 +650,14 @@ describe("RPC Server", () => {
 		const factory = createRpcFactory({ schema: testSchema });
 
 		it("does not expose error stack traces in defects", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () => {
-					const error = new Error("Internal error with sensitive info");
-					error.stack = "Error: Internal error\n  at secret/path/to/file.ts:42:13";
-					return Effect.die(error);
-				}),
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() => {
+				const error = new Error("Internal error with sensitive info");
+				error.stack = "Error: Internal error\n  at secret/path/to/file.ts:42:13";
+				return Effect.die(error);
 			});
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -685,11 +677,10 @@ describe("RPC Server", () => {
 		});
 
 		it("serializes non-Error defects safely", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () =>
-					Effect.die("raw string error"),
-				),
-			});
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() => Effect.die("raw string error"));
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -703,11 +694,12 @@ describe("RPC Server", () => {
 		});
 
 		it("serializes object defects as JSON strings", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () =>
-					Effect.die({ _tag: "CustomDefect", code: 500, details: "some details" }),
-				),
-			});
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() =>
+				Effect.die({ _tag: "CustomDefect", code: 500, details: "some details" }),
+			);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -722,11 +714,10 @@ describe("RPC Server", () => {
 		});
 
 		it("encodes interrupt cause correctly", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () =>
-					Effect.interrupt,
-				),
-			});
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() => Effect.interrupt);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -745,12 +736,15 @@ describe("RPC Server", () => {
 				},
 			) {}
 
-			const module = makeRpcModule({
-				test: factory.query(
-					{ success: Schema.Void, error: ValidationError },
-					() => Effect.fail(new ValidationError({ field: "email", message: "Invalid format" })),
-				),
+			const test = factory.query({
+				success: Schema.Void,
+				error: ValidationError,
 			});
+			test.implement(() =>
+				Effect.fail(new ValidationError({ field: "email", message: "Invalid format" })),
+			);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -768,13 +762,14 @@ describe("RPC Server", () => {
 		});
 
 		it("handles thrown sync exceptions as defects", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () =>
-					Effect.sync(() => {
-						throw new Error("Sync throw");
-					}),
-				),
-			});
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() =>
+				Effect.sync(() => {
+					throw new Error("Sync throw");
+				}),
+			);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -791,11 +786,12 @@ describe("RPC Server", () => {
 		});
 
 		it("handles promise rejections as defects", async () => {
-			const module = makeRpcModule({
-				test: factory.query({ success: Schema.Void }, () =>
-					Effect.promise(() => Promise.reject(new Error("Promise rejection"))),
-				),
-			});
+			const test = factory.query({ success: Schema.Void });
+			test.implement(() =>
+				Effect.promise(() => Promise.reject(new Error("Promise rejection"))),
+			);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -819,20 +815,22 @@ describe("RPC Server", () => {
 				}),
 			}) {}
 
-			const module = makeRpcModule({
-				test: factory.query(
-					{ success: Schema.Void, error: OuterError },
-					() =>
-						Effect.fail(
-							new OuterError({
-								inner: {
-									code: 422,
-									details: ["Field 1 invalid", "Field 2 missing"],
-								},
-							}),
-						),
-				),
+			const test = factory.query({
+				success: Schema.Void,
+				error: OuterError,
 			});
+			test.implement(() =>
+				Effect.fail(
+					new OuterError({
+						inner: {
+							code: 422,
+							details: ["Field 1 invalid", "Field 2 missing"],
+						},
+					}),
+				),
+			);
+
+			const module = makeRpcModule({ test });
 
 			const ctx = createMockCtx();
 			const handler = getHandler(module.handlers.test);
@@ -917,7 +915,7 @@ describe("RPC Server", () => {
 			const factory = createRpcFactory({ schema: testSchema });
 
 			const endpoint = factory
-				.query({ success: Schema.String }, () => Effect.succeed("hello"))
+				.query({ success: Schema.String })
 				.middleware(AuthMiddleware)
 				.middleware(LoggingMiddleware);
 
@@ -951,16 +949,17 @@ describe("RPC Server", () => {
 				return Effect.succeed({ id: `user-${callCount}`, name: `User ${callCount}` });
 			});
 
+			const whoami = factory.query({ success: Schema.String });
+			whoami.implement(() =>
+				Effect.gen(function* () {
+					const user = yield* CurrentUser;
+					return user.name;
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					whoami: factory
-						.query({ success: Schema.String }, () =>
-							Effect.gen(function* () {
-								const user = yield* CurrentUser;
-								return user.name;
-							}),
-						)
-						.middleware(AuthMiddleware),
+					whoami: whoami.middleware(AuthMiddleware),
 				},
 				{ middlewares: [authImpl] },
 			);
@@ -989,18 +988,20 @@ describe("RPC Server", () => {
 				return Effect.succeed({ id: "user-1", name: "Test" });
 			});
 
+			const test = factory.query({
+				payload: { itemId: Schema.String },
+				success: Schema.String,
+			});
+			test.implement((args) =>
+				Effect.gen(function* () {
+					const user = yield* CurrentUser;
+					return `${user.name} accessed ${args.itemId}`;
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					test: factory
-						.query(
-							{ payload: { itemId: Schema.String }, success: Schema.String },
-							(args) =>
-								Effect.gen(function* () {
-									const user = yield* CurrentUser;
-									return `${user.name} accessed ${args.itemId}`;
-								}),
-						)
-						.middleware(AuthMiddleware),
+					test: test.middleware(AuthMiddleware),
 				},
 				{ middlewares: [authImpl] },
 			);
@@ -1022,16 +1023,17 @@ describe("RPC Server", () => {
 				return Effect.succeed({ id: "user-1", name: "Test" });
 			});
 
+			const myEndpoint = factory.query({ success: Schema.String });
+			myEndpoint.implement(() =>
+				Effect.gen(function* () {
+					yield* CurrentUser;
+					return "ok";
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					myEndpoint: factory
-						.query({ success: Schema.String }, () =>
-							Effect.gen(function* () {
-								yield* CurrentUser;
-								return "ok";
-							}),
-						)
-						.middleware(AuthMiddleware),
+					myEndpoint: myEndpoint.middleware(AuthMiddleware),
 				},
 				{ middlewares: [authImpl] },
 			);
@@ -1053,16 +1055,17 @@ describe("RPC Server", () => {
 				return Effect.succeed({ id: "user-1", name: "Test" });
 			});
 
+			const test = factory.query({ success: Schema.String });
+			test.implement(() =>
+				Effect.gen(function* () {
+					yield* CurrentUser;
+					return "ok";
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					test: factory
-						.query({ success: Schema.String }, () =>
-							Effect.gen(function* () {
-								yield* CurrentUser;
-								return "ok";
-							}),
-						)
-						.middleware(AuthMiddleware),
+					test: test.middleware(AuthMiddleware),
 				},
 				{ middlewares: [authImpl] },
 			);
@@ -1095,16 +1098,20 @@ describe("RPC Server", () => {
 				Effect.fail(new AuthError({ reason: "Invalid token" })),
 			);
 
+			const protectedEndpoint = factory.query({
+				success: Schema.String,
+				error: AuthError,
+			});
+			protectedEndpoint.implement(() =>
+				Effect.gen(function* () {
+					yield* CurrentUser;
+					return "secret";
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					protected: factory
-						.query({ success: Schema.String, error: AuthError }, () =>
-							Effect.gen(function* () {
-								yield* CurrentUser;
-								return "secret";
-							}),
-						)
-						.middleware(FailingAuthMiddleware),
+					protected: protectedEndpoint.middleware(FailingAuthMiddleware),
 				},
 				{ middlewares: [authImpl] },
 			);
@@ -1143,17 +1150,19 @@ describe("RPC Server", () => {
 				return Effect.succeed({ log: (msg: string) => executionOrder.push(`log:${msg}`) });
 			});
 
+			const test = factory.query({ success: Schema.String });
+			test.implement(() =>
+				Effect.gen(function* () {
+					const user = yield* CurrentUser;
+					const logger = yield* Logger;
+					logger.log("handler");
+					return user.name;
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					test: factory
-						.query({ success: Schema.String }, () =>
-							Effect.gen(function* () {
-								const user = yield* CurrentUser;
-								const logger = yield* Logger;
-								logger.log("handler");
-								return user.name;
-							}),
-						)
+					test: test
 						.middleware(AuthMiddleware)
 						.middleware(LoggerMiddleware),
 				},
@@ -1190,16 +1199,18 @@ describe("RPC Server", () => {
 
 			const staticLayer = Layer.succeed(StaticService, { value: "static-value" });
 
+			const test = factory.query({ success: Schema.String });
+			test.implement(() =>
+				Effect.gen(function* () {
+					const user = yield* CurrentUser;
+					const static_ = yield* StaticService;
+					return `${user.name}: ${static_.value}`;
+				}),
+			);
+
 			const module = makeRpcModule(
 				{
-					test: factory
-						.query({ success: Schema.String }, () =>
-							Effect.gen(function* () {
-								const user = yield* CurrentUser;
-								const static_ = yield* StaticService;
-								return `${user.name}: ${static_.value}`;
-							}),
-						)
+					test: test
 						.middleware(AuthMiddleware)
 						.middleware(StaticMiddleware),
 				},
