@@ -7,12 +7,15 @@ import {
 	AvatarImage,
 } from "@packages/ui/components/avatar";
 import { Badge } from "@packages/ui/components/badge";
+import { Button } from "@packages/ui/components/button";
 import { Card, CardContent, CardHeader } from "@packages/ui/components/card";
 import { Link } from "@packages/ui/components/link";
 import { Skeleton } from "@packages/ui/components/skeleton";
+import { useGithubActions } from "@packages/ui/rpc/github-actions";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
+import { PatchDiff } from "@pierre/diffs/react";
 import { Option } from "effect";
-import { use, useMemo } from "react";
+import { use, useCallback, useMemo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -168,6 +171,9 @@ export default function PullRequestDetailPage(props: {
 				</Card>
 			)}
 
+			{/* Files Changed */}
+			<FilesChangedSection ownerLogin={owner} name={name} number={prNumber} />
+
 			{/* Check runs */}
 			{pr.checkRuns.length > 0 && (
 				<div className="mt-8">
@@ -302,6 +308,121 @@ export default function PullRequestDetailPage(props: {
 				</p>
 			)}
 		</main>
+	);
+}
+
+// --- Files changed section ---
+
+function FilesChangedSection({
+	ownerLogin,
+	name,
+	number,
+}: {
+	ownerLogin: string;
+	name: string;
+	number: number;
+}) {
+	const githubActions = useGithubActions();
+	const [diffState, setDiffState] = useState<
+		| { status: "idle" }
+		| { status: "loading" }
+		| { status: "loaded"; patch: string | null }
+		| { status: "error"; message: string }
+	>({ status: "idle" });
+
+	const loadDiff = useCallback(() => {
+		setDiffState({ status: "loading" });
+		githubActions.fetchPrDiff
+			.callPromise({ ownerLogin, name, number })
+			.then((patch) => {
+				setDiffState({ status: "loaded", patch });
+			})
+			.catch((err: unknown) => {
+				setDiffState({
+					status: "error",
+					message: err instanceof Error ? err.message : String(err),
+				});
+			});
+	}, [githubActions, ownerLogin, name, number]);
+
+	return (
+		<div className="mt-8">
+			<div className="flex items-center justify-between mb-4">
+				<h2 className="text-lg font-semibold">Files Changed</h2>
+				{diffState.status === "idle" && (
+					<Button variant="outline" size="sm" onClick={loadDiff}>
+						Load Diff
+					</Button>
+				)}
+				{diffState.status === "loaded" && (
+					<Button variant="ghost" size="sm" onClick={loadDiff}>
+						Refresh
+					</Button>
+				)}
+			</div>
+
+			{diffState.status === "loading" && (
+				<Card>
+					<CardContent className="pt-6">
+						<div className="flex items-center gap-2 text-sm text-muted-foreground">
+							<svg
+								className="size-4 animate-spin"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+							>
+								<path
+									d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"
+									opacity=".3"
+								/>
+								<path d="M8 0a8 8 0 0 1 8 8h-1.5A6.5 6.5 0 0 0 8 1.5V0Z" />
+							</svg>
+							Fetching diff from GitHub...
+						</div>
+					</CardContent>
+				</Card>
+			)}
+
+			{diffState.status === "error" && (
+				<Card>
+					<CardContent className="pt-6">
+						<div className="flex items-center justify-between">
+							<p className="text-sm text-destructive">
+								Failed to load diff: {diffState.message}
+							</p>
+							<Button variant="outline" size="sm" onClick={loadDiff}>
+								Retry
+							</Button>
+						</div>
+					</CardContent>
+				</Card>
+			)}
+
+			{diffState.status === "loaded" && diffState.patch === null && (
+				<Card>
+					<CardContent className="pt-6">
+						<p className="text-sm text-muted-foreground">
+							No diff available for this pull request.
+						</p>
+					</CardContent>
+				</Card>
+			)}
+
+			{diffState.status === "loaded" && diffState.patch !== null && (
+				<div className="overflow-hidden rounded-lg border">
+					<PatchDiff patch={diffState.patch} />
+				</div>
+			)}
+
+			{diffState.status === "idle" && (
+				<Card>
+					<CardContent className="pt-6">
+						<p className="text-sm text-muted-foreground">
+							Click &ldquo;Load Diff&rdquo; to view the changed files.
+						</p>
+					</CardContent>
+				</Card>
+			)}
+		</div>
 	);
 }
 
