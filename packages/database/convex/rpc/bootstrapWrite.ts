@@ -97,6 +97,50 @@ const upsertUsersDef = factory.internalMutation({
 });
 
 /**
+ * Upsert a batch of commits for a repository.
+ */
+const upsertCommitsDef = factory.internalMutation({
+	payload: {
+		repositoryId: Schema.Number,
+		commits: Schema.Array(
+			Schema.Struct({
+				sha: Schema.String,
+				authorUserId: Schema.NullOr(Schema.Number),
+				committerUserId: Schema.NullOr(Schema.Number),
+				messageHeadline: Schema.String,
+				authoredAt: Schema.NullOr(Schema.Number),
+				committedAt: Schema.NullOr(Schema.Number),
+				additions: Schema.NullOr(Schema.Number),
+				deletions: Schema.NullOr(Schema.Number),
+				changedFiles: Schema.NullOr(Schema.Number),
+			}),
+		),
+	},
+	success: Schema.Struct({ upserted: Schema.Number }),
+});
+
+/**
+ * Upsert a batch of check runs for a repository.
+ */
+const upsertCheckRunsDef = factory.internalMutation({
+	payload: {
+		repositoryId: Schema.Number,
+		checkRuns: Schema.Array(
+			Schema.Struct({
+				githubCheckRunId: Schema.Number,
+				name: Schema.String,
+				headSha: Schema.String,
+				status: Schema.String,
+				conclusion: Schema.NullOr(Schema.String),
+				startedAt: Schema.NullOr(Schema.Number),
+				completedAt: Schema.NullOr(Schema.Number),
+			}),
+		),
+	},
+	success: Schema.Struct({ upserted: Schema.Number }),
+});
+
+/**
  * Mark a sync job as complete or failed.
  */
 const updateSyncJobStateDef = factory.internalMutation({
@@ -278,6 +322,94 @@ upsertUsersDef.implement((args) =>
 	}),
 );
 
+upsertCommitsDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		const now = Date.now();
+		let upserted = 0;
+
+		for (const commit of args.commits) {
+			const existing = yield* ctx.db
+				.query("github_commits")
+				.withIndex("by_repositoryId_and_sha", (q) =>
+					q.eq("repositoryId", args.repositoryId).eq("sha", commit.sha),
+				)
+				.first();
+
+			if (Option.isSome(existing)) {
+				// Update with richer data if available (e.g. additions/deletions from API)
+				yield* ctx.db.patch(existing.value._id, {
+					authorUserId: commit.authorUserId ?? existing.value.authorUserId,
+					committerUserId:
+						commit.committerUserId ?? existing.value.committerUserId,
+					messageHeadline: commit.messageHeadline,
+					authoredAt: commit.authoredAt ?? existing.value.authoredAt,
+					committedAt: commit.committedAt ?? existing.value.committedAt,
+					additions: commit.additions ?? existing.value.additions,
+					deletions: commit.deletions ?? existing.value.deletions,
+					changedFiles: commit.changedFiles ?? existing.value.changedFiles,
+					cachedAt: now,
+				});
+			} else {
+				yield* ctx.db.insert("github_commits", {
+					repositoryId: args.repositoryId,
+					sha: commit.sha,
+					authorUserId: commit.authorUserId,
+					committerUserId: commit.committerUserId,
+					messageHeadline: commit.messageHeadline,
+					authoredAt: commit.authoredAt,
+					committedAt: commit.committedAt,
+					additions: commit.additions,
+					deletions: commit.deletions,
+					changedFiles: commit.changedFiles,
+					cachedAt: now,
+				});
+			}
+			upserted++;
+		}
+
+		return { upserted };
+	}),
+);
+
+upsertCheckRunsDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		let upserted = 0;
+
+		for (const cr of args.checkRuns) {
+			const existing = yield* ctx.db
+				.query("github_check_runs")
+				.withIndex("by_repositoryId_and_githubCheckRunId", (q) =>
+					q
+						.eq("repositoryId", args.repositoryId)
+						.eq("githubCheckRunId", cr.githubCheckRunId),
+				)
+				.first();
+
+			const data = {
+				repositoryId: args.repositoryId,
+				githubCheckRunId: cr.githubCheckRunId,
+				name: cr.name,
+				headSha: cr.headSha,
+				status: cr.status,
+				conclusion: cr.conclusion,
+				startedAt: cr.startedAt,
+				completedAt: cr.completedAt,
+			};
+
+			if (Option.isSome(existing)) {
+				yield* ctx.db.patch(existing.value._id, data);
+			} else {
+				yield* ctx.db.insert("github_check_runs", data);
+			}
+			upserted++;
+		}
+
+		return { upserted };
+	}),
+);
+
 updateSyncJobStateDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectMutationCtx;
@@ -314,6 +446,8 @@ const bootstrapWriteModule = makeRpcModule(
 		upsertBranches: upsertBranchesDef,
 		upsertPullRequests: upsertPullRequestsDef,
 		upsertIssues: upsertIssuesDef,
+		upsertCommits: upsertCommitsDef,
+		upsertCheckRuns: upsertCheckRunsDef,
 		upsertUsers: upsertUsersDef,
 		updateSyncJobState: updateSyncJobStateDef,
 	},
@@ -324,6 +458,8 @@ export const {
 	upsertBranches,
 	upsertPullRequests,
 	upsertIssues,
+	upsertCommits,
+	upsertCheckRuns,
 	upsertUsers,
 	updateSyncJobState,
 } = bootstrapWriteModule.handlers;

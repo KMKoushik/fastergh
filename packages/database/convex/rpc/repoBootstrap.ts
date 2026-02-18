@@ -37,6 +37,8 @@ export const bootstrapRepoDef = factory.internalAction({
 		branches: Schema.Number,
 		pullRequests: Schema.Number,
 		issues: Schema.Number,
+		commits: Schema.Number,
+		checkRuns: Schema.Number,
 		users: Schema.Number,
 	}),
 });

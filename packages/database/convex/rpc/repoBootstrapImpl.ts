@@ -242,6 +242,130 @@ bootstrapRepoDef.implement((args) =>
 				});
 			}
 
+			// --- Fetch recent commits (default branch, last 100) ---
+			const allCommits: Array<Record<string, unknown>> = [];
+			yield* gh.use(async (fetch) => {
+				const url: string | null =
+					`/repos/${args.fullName}/commits?per_page=100`;
+				const res = await fetch(url);
+				if (!res.ok)
+					throw new GitHubApiError({
+						status: res.status,
+						message: await res.text(),
+						url: res.url,
+					});
+				const page = (await res.json()) as Array<Record<string, unknown>>;
+				allCommits.push(...page);
+				// Only fetch first page for bootstrap — reconciliation handles the rest
+			});
+
+			const commits = allCommits.map((c) => {
+				const commit =
+					typeof c.commit === "object" && c.commit !== null
+						? (c.commit as Record<string, unknown>)
+						: {};
+				const author =
+					typeof commit.author === "object" && commit.author !== null
+						? (commit.author as Record<string, unknown>)
+						: {};
+				const committer =
+					typeof commit.committer === "object" && commit.committer !== null
+						? (commit.committer as Record<string, unknown>)
+						: {};
+
+				// Collect top-level author/committer users (GitHub user objects)
+				const authorUserId = collectUser(c.author);
+				const committerUserId = collectUser(c.committer);
+
+				const message = str(commit.message) ?? "";
+
+				return {
+					sha: str(c.sha) ?? "",
+					authorUserId,
+					committerUserId,
+					messageHeadline: message.split("\n")[0] ?? "",
+					authoredAt: isoToMs(author.date),
+					committedAt: isoToMs(committer.date),
+					additions: null as number | null,
+					deletions: null as number | null,
+					changedFiles: null as number | null,
+				};
+			});
+
+			// Write commits in batches
+			for (let i = 0; i < commits.length; i += 50) {
+				yield* ctx.runMutation(internal.rpc.bootstrapWrite.upsertCommits, {
+					repositoryId: args.githubRepoId,
+					commits: commits.slice(i, i + 50),
+				});
+			}
+
+			// --- Fetch check runs for active PR head SHAs ---
+			const activePrHeadShas = pullRequests
+				.filter((pr) => pr.state === "open" && pr.headSha !== "")
+				.map((pr) => pr.headSha);
+
+			// Deduplicate SHAs
+			const uniqueShas = [...new Set(activePrHeadShas)];
+
+			const allCheckRuns: Array<{
+				githubCheckRunId: number;
+				name: string;
+				headSha: string;
+				status: string;
+				conclusion: string | null;
+				startedAt: number | null;
+				completedAt: number | null;
+			}> = [];
+
+			for (const sha of uniqueShas) {
+				yield* gh.use(async (fetch) => {
+					const res = await fetch(
+						`/repos/${args.fullName}/commits/${sha}/check-runs?per_page=100`,
+					);
+					if (!res.ok) {
+						// Non-critical — some repos may not have check runs enabled
+						if (res.status === 404) return;
+						throw new GitHubApiError({
+							status: res.status,
+							message: await res.text(),
+							url: res.url,
+						});
+					}
+					const data = (await res.json()) as Record<string, unknown>;
+					const checkRuns = Array.isArray(data.check_runs)
+						? data.check_runs
+						: [];
+					for (const cr of checkRuns) {
+						const crObj =
+							typeof cr === "object" && cr !== null
+								? (cr as Record<string, unknown>)
+								: {};
+						const id = num(crObj.id);
+						const name = str(crObj.name);
+						if (id !== null && name !== null) {
+							allCheckRuns.push({
+								githubCheckRunId: id,
+								name,
+								headSha: sha,
+								status: str(crObj.status) ?? "queued",
+								conclusion: str(crObj.conclusion),
+								startedAt: isoToMs(crObj.started_at),
+								completedAt: isoToMs(crObj.completed_at),
+							});
+						}
+					}
+				});
+			}
+
+			// Write check runs in batches
+			for (let i = 0; i < allCheckRuns.length; i += 50) {
+				yield* ctx.runMutation(internal.rpc.bootstrapWrite.upsertCheckRuns, {
+					repositoryId: args.githubRepoId,
+					checkRuns: allCheckRuns.slice(i, i + 50),
+				});
+			}
+
 			// --- Upsert collected users ---
 			const users = [...userMap.values()];
 			if (users.length > 0) {
@@ -256,6 +380,8 @@ bootstrapRepoDef.implement((args) =>
 				branches: branches.length,
 				pullRequests: pullRequests.length,
 				issues: issues.length,
+				commits: commits.length,
+				checkRuns: allCheckRuns.length,
 				users: users.length,
 			};
 		}).pipe(

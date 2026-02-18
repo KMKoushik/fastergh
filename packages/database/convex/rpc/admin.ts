@@ -20,8 +20,12 @@ const tableCountsDef = factory.query({
 	success: Schema.Struct({
 		repositories: Schema.Number,
 		branches: Schema.Number,
+		commits: Schema.Number,
 		pullRequests: Schema.Number,
+		pullRequestReviews: Schema.Number,
 		issues: Schema.Number,
+		issueComments: Schema.Number,
+		checkRuns: Schema.Number,
 		users: Schema.Number,
 		syncJobs: Schema.Number,
 		installations: Schema.Number,
@@ -62,8 +66,16 @@ tableCountsDef.implement(() =>
 		const ctx = yield* ConfectQueryCtx;
 		const repositories = yield* ctx.db.query("github_repositories").collect();
 		const branches = yield* ctx.db.query("github_branches").collect();
+		const commits = yield* ctx.db.query("github_commits").collect();
 		const pullRequests = yield* ctx.db.query("github_pull_requests").collect();
+		const pullRequestReviews = yield* ctx.db
+			.query("github_pull_request_reviews")
+			.collect();
 		const issues = yield* ctx.db.query("github_issues").collect();
+		const issueComments = yield* ctx.db
+			.query("github_issue_comments")
+			.collect();
+		const checkRuns = yield* ctx.db.query("github_check_runs").collect();
 		const users = yield* ctx.db.query("github_users").collect();
 		const syncJobs = yield* ctx.db.query("github_sync_jobs").collect();
 		const installations = yield* ctx.db.query("github_installations").collect();
@@ -73,8 +85,12 @@ tableCountsDef.implement(() =>
 		return {
 			repositories: repositories.length,
 			branches: branches.length,
+			commits: commits.length,
 			pullRequests: pullRequests.length,
+			pullRequestReviews: pullRequestReviews.length,
 			issues: issues.length,
+			issueComments: issueComments.length,
+			checkRuns: checkRuns.length,
 			users: users.length,
 			syncJobs: syncJobs.length,
 			installations: installations.length,

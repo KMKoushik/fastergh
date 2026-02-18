@@ -1,5 +1,5 @@
 import { createRpcFactory, makeRpcModule } from "@packages/confect/rpc";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Match, Option, Schema } from "effect";
 import { ConfectMutationCtx, confectSchema } from "../confect";
 import { DatabaseRpcTelemetryLayer } from "./telemetry";
 
@@ -318,7 +318,7 @@ const handleIssueCommentEvent = (
 	});
 
 /**
- * Handle `push` events — update branch head SHA
+ * Handle `push` events — update branch head SHA + extract commits
  */
 const handlePushEvent = (
 	payload: Record<string, unknown>,
@@ -353,15 +353,15 @@ const handlePushEvent = (
 		}
 
 		// Upsert branch with new head SHA
-		const existing = yield* ctx.db
+		const existingBranch = yield* ctx.db
 			.query("github_branches")
 			.withIndex("by_repositoryId_and_name", (q) =>
 				q.eq("repositoryId", repositoryId).eq("name", branchName),
 			)
 			.first();
 
-		if (Option.isSome(existing)) {
-			yield* ctx.db.patch(existing.value._id, {
+		if (Option.isSome(existingBranch)) {
+			yield* ctx.db.patch(existingBranch.value._id, {
 				headSha: after,
 				updatedAt: now,
 			});
@@ -373,6 +373,47 @@ const handlePushEvent = (
 				protected: false,
 				updatedAt: now,
 			});
+		}
+
+		// Extract commits from push payload
+		const commits = Array.isArray(payload.commits) ? payload.commits : [];
+		for (const rawCommit of commits) {
+			const c = obj(rawCommit);
+			const sha = str(c.id);
+			if (!sha) continue;
+
+			// Extract author/committer user IDs from the commit
+			const authorObj = obj(c.author);
+			const committerObj = obj(c.committer);
+
+			// Push webhook commit authors don't have full user objects with IDs
+			// They have name, email, username fields instead
+			// We can't reliably map to githubUserId without an API call
+
+			const messageHeadline = str(c.message)?.split("\n")[0] ?? "";
+
+			const existingCommit = yield* ctx.db
+				.query("github_commits")
+				.withIndex("by_repositoryId_and_sha", (q) =>
+					q.eq("repositoryId", repositoryId).eq("sha", sha),
+				)
+				.first();
+
+			if (Option.isNone(existingCommit)) {
+				yield* ctx.db.insert("github_commits", {
+					repositoryId,
+					sha,
+					authorUserId: null,
+					committerUserId: null,
+					messageHeadline,
+					authoredAt: isoToMs(c.timestamp),
+					committedAt: isoToMs(c.timestamp),
+					additions: null,
+					deletions: null,
+					changedFiles: null,
+					cachedAt: now,
+				});
+			}
 		}
 
 		// Also upsert the pusher as a user if available
@@ -461,6 +502,49 @@ const handleCreateEvent = (
 	});
 
 /**
+ * Handle `check_run` events: created, completed, rerequested, requested_action
+ */
+const handleCheckRunEvent = (
+	payload: Record<string, unknown>,
+	repositoryId: number,
+) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		const checkRun = obj(payload.check_run);
+		const githubCheckRunId = num(checkRun.id);
+		const name = str(checkRun.name);
+		const headSha = str(checkRun.head_sha);
+
+		if (githubCheckRunId === null || !name || !headSha) return;
+
+		const data = {
+			repositoryId,
+			githubCheckRunId,
+			name,
+			headSha,
+			status: str(checkRun.status) ?? "queued",
+			conclusion: str(checkRun.conclusion),
+			startedAt: isoToMs(checkRun.started_at),
+			completedAt: isoToMs(checkRun.completed_at),
+		};
+
+		const existing = yield* ctx.db
+			.query("github_check_runs")
+			.withIndex("by_repositoryId_and_githubCheckRunId", (q) =>
+				q
+					.eq("repositoryId", repositoryId)
+					.eq("githubCheckRunId", githubCheckRunId),
+			)
+			.first();
+
+		if (Option.isSome(existing)) {
+			yield* ctx.db.patch(existing.value._id, data);
+		} else {
+			yield* ctx.db.insert("github_check_runs", data);
+		}
+	});
+
+/**
  * Handle `delete` events — branch or tag deleted
  */
 const handleDeleteEvent = (
@@ -485,6 +569,33 @@ const handleDeleteEvent = (
 			yield* ctx.db.delete(existing.value._id);
 		}
 	});
+
+// ---------------------------------------------------------------------------
+// Shared dispatcher — used by both single-event and batch processors
+// ---------------------------------------------------------------------------
+
+const dispatchHandler = (
+	eventName: string,
+	payload: Record<string, unknown>,
+	repositoryId: number,
+) =>
+	Match.value(eventName).pipe(
+		Match.when("issues", () => handleIssuesEvent(payload, repositoryId)),
+		Match.when("pull_request", () =>
+			handlePullRequestEvent(payload, repositoryId),
+		),
+		Match.when("issue_comment", () =>
+			handleIssueCommentEvent(payload, repositoryId),
+		),
+		Match.when("push", () => handlePushEvent(payload, repositoryId)),
+		Match.when("pull_request_review", () =>
+			handlePullRequestReviewEvent(payload, repositoryId),
+		),
+		Match.when("check_run", () => handleCheckRunEvent(payload, repositoryId)),
+		Match.when("create", () => handleCreateEvent(payload, repositoryId)),
+		Match.when("delete", () => handleDeleteEvent(payload, repositoryId)),
+		Match.orElse(() => Effect.void),
+	);
 
 // ---------------------------------------------------------------------------
 // Processor — dispatches raw webhook events to appropriate handlers
@@ -562,29 +673,7 @@ processWebhookEventDef.implement((args) =>
 		}
 
 		// Dispatch to handler based on event name
-		const handlerEffect = (() => {
-			switch (event.eventName) {
-				case "issues":
-					return handleIssuesEvent(payload, repositoryId);
-				case "pull_request":
-					return handlePullRequestEvent(payload, repositoryId);
-				case "issue_comment":
-					return handleIssueCommentEvent(payload, repositoryId);
-				case "push":
-					return handlePushEvent(payload, repositoryId);
-				case "pull_request_review":
-					return handlePullRequestReviewEvent(payload, repositoryId);
-				case "create":
-					return handleCreateEvent(payload, repositoryId);
-				case "delete":
-					return handleDeleteEvent(payload, repositoryId);
-				default:
-					// Unknown event type — mark as processed anyway
-					return Effect.void;
-			}
-		})();
-
-		yield* handlerEffect.pipe(
+		yield* dispatchHandler(event.eventName, payload, repositoryId).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
 					// Mark as failed
@@ -640,28 +729,11 @@ processAllPendingDef.implement(() =>
 				continue;
 			}
 
-			const handlerEffect = (() => {
-				switch (event.eventName) {
-					case "issues":
-						return handleIssuesEvent(payload, repositoryId);
-					case "pull_request":
-						return handlePullRequestEvent(payload, repositoryId);
-					case "issue_comment":
-						return handleIssueCommentEvent(payload, repositoryId);
-					case "push":
-						return handlePushEvent(payload, repositoryId);
-					case "pull_request_review":
-						return handlePullRequestReviewEvent(payload, repositoryId);
-					case "create":
-						return handleCreateEvent(payload, repositoryId);
-					case "delete":
-						return handleDeleteEvent(payload, repositoryId);
-					default:
-						return Effect.void;
-				}
-			})();
-
-			const result = yield* handlerEffect.pipe(
+			const result = yield* dispatchHandler(
+				event.eventName,
+				payload,
+				repositoryId,
+			).pipe(
 				Effect.map(() => true),
 				Effect.catchAll((error) =>
 					Effect.gen(function* () {
