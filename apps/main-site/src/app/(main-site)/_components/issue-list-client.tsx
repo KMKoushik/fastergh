@@ -1,14 +1,16 @@
 "use client";
 
-import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Link } from "@packages/ui/components/link";
+import { useInfinitePaginationWithInitial } from "@packages/ui/hooks/use-paginated-atom";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
-import { CheckCircle2, CircleDot, MessageCircle } from "lucide-react";
+import { CheckCircle2, CircleDot, Loader2, MessageCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
+
+const PAGE_SIZE = 30;
 
 type IssueItem = {
 	readonly number: number;
@@ -28,16 +30,16 @@ export function IssueListClient({
 }: {
 	owner: string;
 	name: string;
-	initialData?: readonly IssueItem[];
+	initialData?: ReadonlyArray<IssueItem>;
 }) {
 	const [stateFilter, setStateFilter] = useState<"open" | "closed" | "all">(
 		"open",
 	);
 
 	const client = useProjectionQueries();
-	const issuesAtom = useMemo(
+	const paginatedAtom = useMemo(
 		() =>
-			client.listIssues.subscription({
+			client.listIssuesPaginated.paginated(PAGE_SIZE, {
 				ownerLogin: owner,
 				name,
 				state: stateFilter === "all" ? undefined : stateFilter,
@@ -45,7 +47,11 @@ export function IssueListClient({
 		[client, owner, name, stateFilter],
 	);
 
-	const issues = useSubscriptionWithInitial(issuesAtom, initialData);
+	const {
+		items: issues,
+		sentinelRef,
+		isLoading,
+	} = useInfinitePaginationWithInitial(paginatedAtom, initialData);
 
 	const pathname = usePathname();
 	const activeNumber = (() => {
@@ -69,7 +75,7 @@ export function IssueListClient({
 				))}
 			</div>
 
-			{issues.length === 0 && (
+			{issues.length === 0 && !isLoading && (
 				<p className="px-2 py-8 text-xs text-muted-foreground text-center">
 					No {stateFilter !== "all" ? stateFilter : ""} issues.
 				</p>
@@ -126,6 +132,14 @@ export function IssueListClient({
 					</div>
 				</Link>
 			))}
+
+			{/* Sentinel for infinite scroll */}
+			<div ref={sentinelRef} className="h-1" />
+			{isLoading && (
+				<div className="flex items-center justify-center py-3">
+					<Loader2 className="size-4 animate-spin text-muted-foreground" />
+				</div>
+			)}
 		</div>
 	);
 }

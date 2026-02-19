@@ -994,8 +994,8 @@ requestPrFileSyncDef.implement((args) =>
 		// 1. Find the repo
 		const repo = yield* ctx.db
 			.query("github_repositories")
-			.withIndex("by_fullName", (q) =>
-				q.eq("fullName", `${args.ownerLogin}/${args.name}`),
+			.withIndex("by_ownerLogin_and_name", (q) =>
+				q.eq("ownerLogin", args.ownerLogin).eq("name", args.name),
 			)
 			.first();
 

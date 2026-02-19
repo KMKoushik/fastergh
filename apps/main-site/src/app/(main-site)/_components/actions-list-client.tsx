@@ -1,13 +1,15 @@
 "use client";
 
-import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import { Badge } from "@packages/ui/components/badge";
 import { Link } from "@packages/ui/components/link";
+import { useInfinitePaginationWithInitial } from "@packages/ui/hooks/use-paginated-atom";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
+
+const PAGE_SIZE = 30;
 
 type WorkflowRunItem = {
 	readonly githubRunId: number;
@@ -33,19 +35,23 @@ export function ActionsListClient({
 }: {
 	owner: string;
 	name: string;
-	initialData?: readonly WorkflowRunItem[];
+	initialData?: ReadonlyArray<WorkflowRunItem>;
 }) {
 	const client = useProjectionQueries();
-	const runsAtom = useMemo(
+	const paginatedAtom = useMemo(
 		() =>
-			client.listWorkflowRuns.subscription({
+			client.listWorkflowRunsPaginated.paginated(PAGE_SIZE, {
 				ownerLogin: owner,
 				name,
 			}),
 		[client, owner, name],
 	);
 
-	const runs = useSubscriptionWithInitial(runsAtom, initialData);
+	const {
+		items: runs,
+		sentinelRef,
+		isLoading,
+	} = useInfinitePaginationWithInitial(paginatedAtom, initialData);
 
 	const pathname = usePathname();
 	const activeRunNumber = (() => {
@@ -55,7 +61,7 @@ export function ActionsListClient({
 
 	return (
 		<div className="p-1.5">
-			{runs.length === 0 && (
+			{runs.length === 0 && !isLoading && (
 				<p className="px-2 py-8 text-xs text-muted-foreground text-center">
 					No workflow runs.
 				</p>
@@ -103,6 +109,14 @@ export function ActionsListClient({
 					</div>
 				</Link>
 			))}
+
+			{/* Sentinel for infinite scroll */}
+			<div ref={sentinelRef} className="h-1" />
+			{isLoading && (
+				<div className="flex items-center justify-center py-3">
+					<Loader2 className="size-4 animate-spin text-muted-foreground" />
+				</div>
+			)}
 		</div>
 	);
 }

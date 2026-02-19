@@ -140,7 +140,6 @@ export function Link(
 			return (
 				<Link
 					{...anchorProps}
-					prefetch={true}
 					href={rest.href}
 					target="_blank"
 					rel="noopener noreferrer"
@@ -154,7 +153,6 @@ export function Link(
 		return (
 			<Link
 				{...anchorProps}
-				prefetch={true}
 				href={rest.href}
 				target="_blank"
 				rel="noopener noreferrer"
@@ -165,5 +163,7 @@ export function Link(
 		);
 	}
 
-	return <InternalLink icon={icon} className={className} {...rest} />;
+	return (
+		<InternalLink icon={icon} className={className} prefetch={true} {...rest} />
+	);
 }
