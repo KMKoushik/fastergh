@@ -27,6 +27,7 @@ import type * as rpc_telemetry from "../rpc/telemetry.js";
 import type * as rpc_webhookIngestion from "../rpc/webhookIngestion.js";
 import type * as rpc_webhookProcessor from "../rpc/webhookProcessor.js";
 import type * as shared_githubApi from "../shared/githubApi.js";
+import type * as shared_githubApp from "../shared/githubApp.js";
 import type * as shared_projections from "../shared/projections.js";
 import type * as shared_rateLimiter from "../shared/rateLimiter.js";
 import type * as shared_webhookVerify from "../shared/webhookVerify.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   "rpc/webhookIngestion": typeof rpc_webhookIngestion;
   "rpc/webhookProcessor": typeof rpc_webhookProcessor;
   "shared/githubApi": typeof shared_githubApi;
+  "shared/githubApp": typeof shared_githubApp;
   "shared/projections": typeof shared_projections;
   "shared/rateLimiter": typeof shared_rateLimiter;
   "shared/webhookVerify": typeof shared_webhookVerify;

@@ -1,9 +1,8 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { type BetterAuthOptions, betterAuth } from "better-auth/minimal";
+import { type GenericDataModel, queryGeneric } from "convex/server";
 import { components } from "./_generated/api";
-import type { DataModel } from "./_generated/dataModel";
-import { query } from "./_generated/server";
 import authConfig from "./auth.config";
 import authSchema from "./betterAuth/schema";
 
@@ -11,7 +10,13 @@ import authSchema from "./betterAuth/schema";
 // Better Auth component client (local install mode)
 // ---------------------------------------------------------------------------
 
-export const authComponent = createClient<DataModel, typeof authSchema>(
+/**
+ * We use GenericDataModel instead of our specific DataModel because Confect
+ * generates readonly arrays (from Effect Schema) which are incompatible with
+ * Convex's GenericDocument mutable array constraint. Better Auth only accesses
+ * its own component tables through the adapter, so this is safe.
+ */
+export const authComponent = createClient<GenericDataModel, typeof authSchema>(
 	components.betterAuth,
 	{
 		local: {
@@ -27,7 +32,7 @@ export const authComponent = createClient<DataModel, typeof authSchema>(
 
 const siteUrl = process.env.SITE_URL;
 
-export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
+export const createAuthOptions = (ctx: GenericCtx) => {
 	return {
 		baseURL: siteUrl,
 		database: authComponent.adapter(ctx),
@@ -57,7 +62,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
 // Auth instance factory
 // ---------------------------------------------------------------------------
 
-export const createAuth = (ctx: GenericCtx<DataModel>) =>
+export const createAuth = (ctx: GenericCtx) =>
 	betterAuth(createAuthOptions(ctx));
 
 // ---------------------------------------------------------------------------
@@ -69,8 +74,12 @@ export const { getAuthUser } = authComponent.clientApi();
 /**
  * Get the current authenticated user (or null if not signed in).
  * Used from the client via subscription.
+ *
+ * Uses `queryGeneric` instead of the typed `query` from `_generated/server`
+ * because Better Auth expects `GenericCtx<GenericDataModel>`, and our typed
+ * query ctx (with specific DataModel) isn't assignable to the generic one.
  */
-export const getCurrentUser = query({
+export const getCurrentUser = queryGeneric({
 	args: {},
 	returns: undefined,
 	handler: async (ctx) => {

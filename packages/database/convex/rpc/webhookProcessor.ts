@@ -680,6 +680,160 @@ const handleDeleteEvent = (
 	});
 
 // ---------------------------------------------------------------------------
+// Installation lifecycle handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle GitHub App installation and installation_repositories events.
+ *
+ * - `installation.created` → upsert the installation record
+ * - `installation.deleted` / `installation.suspended` → update state
+ * - `installation_repositories.added` / `removed` → sync repo list
+ */
+const handleInstallationEvent = (
+	eventName: string,
+	action: string | null,
+	payload: Record<string, unknown>,
+	installationId: number | null,
+) =>
+	Effect.gen(function* () {
+		if (installationId === null) return;
+
+		const ctx = yield* ConfectMutationCtx;
+		const now = Date.now();
+		const installation = obj(payload.installation);
+		const account = obj(installation.account);
+		const accountLogin = str(account.login) ?? "unknown";
+		const accountId = num(account.id) ?? 0;
+		const accountType =
+			str(account.type) === "Organization"
+				? ("Organization" as const)
+				: ("User" as const);
+
+		if (eventName === "installation") {
+			const existing = yield* ctx.db
+				.query("github_installations")
+				.withIndex("by_installationId", (q) =>
+					q.eq("installationId", installationId),
+				)
+				.first();
+
+			if (action === "created") {
+				if (Option.isNone(existing)) {
+					yield* ctx.db.insert("github_installations", {
+						installationId,
+						accountId,
+						accountLogin,
+						accountType,
+						suspendedAt: null,
+						permissionsDigest: JSON.stringify(obj(installation.permissions)),
+						eventsDigest: JSON.stringify(installation.events ?? []),
+						updatedAt: now,
+					});
+				} else {
+					yield* ctx.db.patch(existing.value._id, {
+						accountLogin,
+						accountType,
+						suspendedAt: null,
+						permissionsDigest: JSON.stringify(obj(installation.permissions)),
+						eventsDigest: JSON.stringify(installation.events ?? []),
+						updatedAt: now,
+					});
+				}
+				console.info(
+					`[webhookProcessor] Installation created: ${installationId} (${accountLogin})`,
+				);
+			} else if (action === "deleted" && Option.isSome(existing)) {
+				yield* ctx.db.delete(existing.value._id);
+				console.info(
+					`[webhookProcessor] Installation deleted: ${installationId} (${accountLogin})`,
+				);
+			} else if (action === "suspend" && Option.isSome(existing)) {
+				yield* ctx.db.patch(existing.value._id, {
+					suspendedAt: now,
+					updatedAt: now,
+				});
+			} else if (action === "unsuspend" && Option.isSome(existing)) {
+				yield* ctx.db.patch(existing.value._id, {
+					suspendedAt: null,
+					updatedAt: now,
+				});
+			}
+		}
+
+		if (eventName === "installation_repositories") {
+			// Repos added to the installation
+			const added = Array.isArray(payload.repositories_added)
+				? (payload.repositories_added as Array<Record<string, unknown>>)
+				: [];
+			for (const repo of added) {
+				const githubRepoId = num(repo.id);
+				const fullName = str(repo.full_name);
+				if (githubRepoId === null || fullName === null) continue;
+
+				const parts = fullName.split("/");
+				if (parts.length !== 2) continue;
+
+				const existingRepo = yield* ctx.db
+					.query("github_repositories")
+					.withIndex("by_githubRepoId", (q) =>
+						q.eq("githubRepoId", githubRepoId),
+					)
+					.first();
+
+				if (Option.isNone(existingRepo)) {
+					yield* ctx.db.insert("github_repositories", {
+						githubRepoId,
+						installationId,
+						ownerId: accountId,
+						ownerLogin: accountLogin,
+						name: parts[1] ?? "",
+						fullName,
+						private: bool(repo.private),
+						visibility: bool(repo.private) ? "private" : "public",
+						defaultBranch: str(repo.default_branch) ?? "main",
+						archived: false,
+						disabled: false,
+						fork: false,
+						pushedAt: null,
+						githubUpdatedAt: now,
+						cachedAt: now,
+					});
+				} else {
+					yield* ctx.db.patch(existingRepo.value._id, {
+						installationId,
+						cachedAt: now,
+					});
+				}
+			}
+
+			// Repos removed from the installation
+			const removed = Array.isArray(payload.repositories_removed)
+				? (payload.repositories_removed as Array<Record<string, unknown>>)
+				: [];
+			for (const repo of removed) {
+				const githubRepoId = num(repo.id);
+				if (githubRepoId === null) continue;
+
+				const existingRepo = yield* ctx.db
+					.query("github_repositories")
+					.withIndex("by_githubRepoId", (q) =>
+						q.eq("githubRepoId", githubRepoId),
+					)
+					.first();
+
+				if (Option.isSome(existingRepo)) {
+					yield* ctx.db.delete(existingRepo.value._id);
+				}
+			}
+
+			console.info(
+				`[webhookProcessor] installation_repositories: +${added.length} -${removed.length} for installation ${installationId}`,
+			);
+		}
+	});
+
+// ---------------------------------------------------------------------------
 // Shared dispatcher — used by both single-event and batch processors
 // ---------------------------------------------------------------------------
 
@@ -1201,8 +1355,19 @@ processWebhookEventDef.implement((args) =>
 		const payload: Record<string, unknown> = JSON.parse(event.payloadJson);
 		const repositoryId = event.repositoryId;
 
-		// Events without a repository → mark processed immediately
+		// Events without a repository — handle installation lifecycle, skip others
 		if (repositoryId === null) {
+			if (
+				event.eventName === "installation" ||
+				event.eventName === "installation_repositories"
+			) {
+				yield* handleInstallationEvent(
+					event.eventName,
+					event.action,
+					payload,
+					event.installationId,
+				);
+			}
 			yield* ctx.db.patch(event._id, { processState: "processed" });
 			return {
 				processed: true,
@@ -1278,8 +1443,19 @@ processAllPendingDef.implement(() =>
 			const payload: Record<string, unknown> = JSON.parse(event.payloadJson);
 			const repositoryId = event.repositoryId;
 
-			// Events without a repo → mark processed
+			// Events without a repo — handle installation lifecycle, skip others
 			if (repositoryId === null) {
+				if (
+					event.eventName === "installation" ||
+					event.eventName === "installation_repositories"
+				) {
+					yield* handleInstallationEvent(
+						event.eventName,
+						event.action,
+						payload,
+						event.installationId,
+					);
+				}
 				yield* ctx.db.patch(event._id, { processState: "processed" });
 				processed++;
 				continue;

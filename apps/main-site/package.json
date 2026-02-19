@@ -6,8 +6,8 @@
 	"scripts": {
 		"with-env": "bun run --env-file=../../.env --",
 		"with-env:prod": "bun run --env-file=../../.env.production --",
-		"dev": "NODE_ENV=development bun with-env next dev --turbo ${REMOTE_DEV:+-H 0.0.0.0} --port 4001",
-		"dev:prod": "NODE_ENV=development bun with-env:prod next dev --turbo --port 4001",
+		"dev": "NODE_ENV=development bun with-env next dev --turbo ${REMOTE_DEV:+-H 0.0.0.0} --port 4007",
+		"dev:prod": "NODE_ENV=development bun with-env:prod next dev --turbo --port 4007",
 		"build": "bun with-env next build",
 		"start": "bun with-env next start",
 		"typecheck": "tsgo --noEmit",

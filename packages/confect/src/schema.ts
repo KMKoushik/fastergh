@@ -19,6 +19,21 @@ import { Record, Schema } from "effect";
 
 import { Id, schemaToObjectValidator } from "./validators";
 
+/**
+ * Recursively removes `readonly` modifiers from all properties and arrays.
+ *
+ * Effect Schema produces readonly types (e.g. `readonly number[]`, `readonly` properties),
+ * but Convex's `GenericDocument` requires mutable `Value[]`. This utility bridges the gap
+ * at the type level — the runtime validators produced by `schemaToObjectValidator` are
+ * already Convex-native (mutable), so this only affects TypeScript inference.
+ */
+type DeepMutable<T> =
+	T extends ReadonlyArray<infer U>
+		? Array<DeepMutable<U>>
+		: T extends object
+			? { -readonly [K in keyof T]: DeepMutable<T[K]> }
+			: T;
+
 const SystemFieldsSchema = Schema.Struct({
 	_id: Schema.String,
 	_creationTime: Schema.Number,
@@ -33,7 +48,7 @@ const createSystemFieldsSchema = <TableName extends string>(tableName: TableName
 export interface ConfectTableDefinition<
 	TableSchema extends Schema.Schema.AnyNoContext,
 	TableValidator extends Validator<unknown, "required" | "optional", string> = Validator<
-		TableSchema["Encoded"],
+		DeepMutable<TableSchema["Encoded"]>,
 		"required",
 		string
 	>,
@@ -337,7 +352,7 @@ export type DocumentFromTable<
 > = Expand<
 	IdField<TableName> &
 		SystemFields &
-		Tables[TableName]["tableSchema"]["Type"]
+		DeepMutable<Tables[TableName]["tableSchema"]["Type"]>
 >;
 
 export type EncodedDocumentFromTable<
@@ -346,7 +361,7 @@ export type EncodedDocumentFromTable<
 > = Expand<
 	IdField<TableName> &
 		SystemFields &
-		Tables[TableName]["tableSchema"]["Encoded"]
+		DeepMutable<Tables[TableName]["tableSchema"]["Encoded"]>
 >;
 
 export type ConfectDataModel<Tables extends GenericConfectSchema> = {

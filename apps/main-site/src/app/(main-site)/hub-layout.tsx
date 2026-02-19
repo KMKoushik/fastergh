@@ -312,32 +312,61 @@ function AddRepoFormCompact() {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const isLoading = Result.isWaiting(addResult);
 
+	const errorMessage = (() => {
+		const err = Result.error(addResult);
+		if (Option.isNone(err)) return null;
+		const e = err.value;
+		if ("_tag" in e) {
+			switch (e._tag) {
+				case "InvalidRepoUrl":
+					return "Invalid URL. Use owner/repo format.";
+				case "RepoNotFound":
+					return "Repository not found on GitHub.";
+				case "AlreadyConnected":
+					return "Repository is already connected.";
+				case "WebhookSetupFailed":
+					return "Added, but webhook setup failed.";
+			}
+		}
+		return "Failed to add repository.";
+	})();
+
+	const isSuccess =
+		Result.isSuccess(addResult) && Option.isSome(Result.value(addResult));
+
 	return (
-		<form
-			className="mt-2 flex gap-1.5"
-			onSubmit={(e) => {
-				e.preventDefault();
-				const url = inputRef.current?.value.trim();
-				if (!url || isLoading) return;
-				addRepo({ url });
-				if (inputRef.current) inputRef.current.value = "";
-			}}
-		>
-			<Input
-				ref={inputRef}
-				placeholder="owner/repo"
-				disabled={isLoading}
-				className="h-7 text-xs flex-1"
-			/>
-			<Button
-				type="submit"
-				size="sm"
-				disabled={isLoading}
-				className="h-7 text-xs px-2"
+		<div className="mt-2">
+			<form
+				className="flex gap-1.5"
+				onSubmit={(e) => {
+					e.preventDefault();
+					const url = inputRef.current?.value.trim();
+					if (!url || isLoading) return;
+					addRepo({ url });
+				}}
 			>
-				{isLoading ? "..." : "Add"}
-			</Button>
-		</form>
+				<Input
+					ref={inputRef}
+					placeholder="owner/repo"
+					disabled={isLoading}
+					className="h-7 text-xs flex-1"
+				/>
+				<Button
+					type="submit"
+					size="sm"
+					disabled={isLoading}
+					className="h-7 text-xs px-2"
+				>
+					{isLoading ? "..." : "Add"}
+				</Button>
+			</form>
+			{errorMessage && (
+				<p className="mt-1 text-[11px] text-destructive">{errorMessage}</p>
+			)}
+			{isSuccess && (
+				<p className="mt-1 text-[11px] text-green-600">Repository added!</p>
+			)}
+		</div>
 	);
 }
 
