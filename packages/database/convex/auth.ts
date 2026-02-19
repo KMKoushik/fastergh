@@ -30,14 +30,11 @@ export const authComponent = createClient<GenericDataModel, typeof authSchema>(
 // Auth options factory
 // ---------------------------------------------------------------------------
 
-const convexSiteUrl = process.env.CONVEX_SITE_URL;
+const siteUrl = process.env.SITE_URL;
 
 export const createAuthOptions = (ctx: GenericCtx) => {
-	const siteUrl = process.env.SITE_URL;
-
 	return {
-		baseURL: convexSiteUrl,
-		trustedOrigins: siteUrl ? [siteUrl] : [],
+		baseURL: siteUrl,
 		database: authComponent.adapter(ctx),
 		account: {
 			accountLinking: {
