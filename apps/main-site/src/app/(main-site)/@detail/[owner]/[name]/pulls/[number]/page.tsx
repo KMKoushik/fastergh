@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { DetailSkeleton } from "../../../../../_components/skeletons";
 import { PrDetailClient } from "./pr-detail-client";
 
 export default async function PrDetailSlot(props: {
@@ -22,7 +23,7 @@ export default async function PrDetailSlot(props: {
 	});
 
 	return (
-		<Suspense>
+		<Suspense fallback={<DetailSkeleton />}>
 			<PrDetailClient
 				owner={owner}
 				name={name}

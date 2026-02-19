@@ -6,6 +6,7 @@ const withVercelToolbar = createWithVercelToolbar();
 
 const nextConfig: NextConfig = {
 	reactStrictMode: true,
+	cacheComponents: false,
 	typescript: {
 		ignoreBuildErrors: true,
 	},

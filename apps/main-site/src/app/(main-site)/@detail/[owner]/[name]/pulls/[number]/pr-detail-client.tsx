@@ -10,7 +10,6 @@ import {
 import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Card, CardContent, CardHeader } from "@packages/ui/components/card";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { Separator } from "@packages/ui/components/separator";
 import { Textarea } from "@packages/ui/components/textarea";
 import { cn } from "@packages/ui/lib/utils";
@@ -124,7 +123,7 @@ export function PrDetailClient({
 	}
 
 	return (
-		<ScrollArea className="h-full overflow-hidden">
+		<div className="h-full overflow-y-auto">
 			<div className="p-4">
 				{/* Header */}
 				<div className="flex items-start gap-2">
@@ -333,7 +332,7 @@ export function PrDetailClient({
 					repositoryId={pr.repositoryId}
 				/>
 			</div>
-		</ScrollArea>
+		</div>
 	);
 }
 

@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { ListSkeleton } from "../../../../../_components/skeletons";
 import { ActionsListClient } from "../actions-list-client";
 
 export default async function ActionsListWithDetailSlot(props: {
@@ -13,7 +14,7 @@ export default async function ActionsListWithDetailSlot(props: {
 	});
 
 	return (
-		<Suspense>
+		<Suspense fallback={<ListSkeleton />}>
 			<ActionsListClient
 				owner={owner}
 				name={name}

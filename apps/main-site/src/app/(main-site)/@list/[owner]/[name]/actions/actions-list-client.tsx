@@ -3,7 +3,6 @@
 import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import { Badge } from "@packages/ui/components/badge";
 import { Link } from "@packages/ui/components/link";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import {
@@ -74,7 +73,7 @@ export function ActionsListClient({
 				</div>
 				<TabBar owner={owner} name={name} activeTab="actions" />
 			</div>
-			<ScrollArea className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-y-auto">
 				<div className="p-2">
 					{runs.length === 0 && (
 						<p className="px-2 py-6 text-xs text-muted-foreground text-center">
@@ -118,7 +117,7 @@ export function ActionsListClient({
 						</Link>
 					))}
 				</div>
-			</ScrollArea>
+			</div>
 		</div>
 	);
 }

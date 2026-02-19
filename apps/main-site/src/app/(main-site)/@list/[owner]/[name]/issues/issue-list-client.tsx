@@ -4,7 +4,6 @@ import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Link } from "@packages/ui/components/link";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import {
@@ -72,7 +71,7 @@ export function IssueListClient({
 				</div>
 				<TabBar owner={owner} name={name} activeTab="issues" />
 			</div>
-			<ScrollArea className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-y-auto">
 				<div className="p-2">
 					<div className="flex gap-1 mb-2">
 						{(["open", "closed", "all"] as const).map((f) => (
@@ -140,7 +139,7 @@ export function IssueListClient({
 						</Link>
 					))}
 				</div>
-			</ScrollArea>
+			</div>
 		</div>
 	);
 }

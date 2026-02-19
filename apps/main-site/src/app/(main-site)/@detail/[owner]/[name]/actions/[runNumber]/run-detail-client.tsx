@@ -9,7 +9,6 @@ import {
 import { Badge } from "@packages/ui/components/badge";
 import { Card, CardContent, CardHeader } from "@packages/ui/components/card";
 import { Link } from "@packages/ui/components/link";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import {
@@ -88,7 +87,7 @@ export function RunDetailClient({
 	}
 
 	return (
-		<ScrollArea className="h-full overflow-hidden">
+		<div className="h-full overflow-y-auto">
 			<div className="p-4">
 				{/* Header */}
 				<div className="flex items-start gap-2">
@@ -171,7 +170,7 @@ export function RunDetailClient({
 					</div>
 				)}
 			</div>
-		</ScrollArea>
+		</div>
 	);
 }
 

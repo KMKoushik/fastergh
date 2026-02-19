@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { ListSkeleton } from "../../../../_components/skeletons";
 import { IssueListClient } from "./issue-list-client";
 
 export default async function IssueListSlot(props: {
@@ -14,7 +15,7 @@ export default async function IssueListSlot(props: {
 	});
 
 	return (
-		<Suspense>
+		<Suspense fallback={<ListSkeleton />}>
 			<IssueListClient
 				owner={owner}
 				name={name}

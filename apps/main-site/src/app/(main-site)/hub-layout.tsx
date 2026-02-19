@@ -23,7 +23,6 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@packages/ui/components/resizable";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { Separator } from "@packages/ui/components/separator";
 import { Skeleton } from "@packages/ui/components/skeleton";
 import { Textarea } from "@packages/ui/components/textarea";
@@ -253,7 +252,7 @@ function RepoSidebar({
 				<h2 className="text-sm font-semibold text-foreground">Repositories</h2>
 				<AddRepoFormCompact />
 			</div>
-			<ScrollArea className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-y-auto">
 				<div className="p-1">
 					{Result.isInitial(reposResult) && <RepoListSkeleton />}
 
@@ -301,7 +300,7 @@ function RepoSidebar({
 						});
 					})()}
 				</div>
-			</ScrollArea>
+			</div>
 		</div>
 	);
 }
@@ -316,8 +315,9 @@ function AddRepoFormCompact() {
 		const err = Result.error(addResult);
 		if (Option.isNone(err)) return null;
 		const e = err.value;
-		if ("_tag" in e) {
-			switch (e._tag) {
+		if (typeof e === "object" && e !== null && "_tag" in e) {
+			const tag = (e as { _tag: string })._tag;
+			switch (tag) {
 				case "InvalidRepoUrl":
 					return "Invalid URL. Use owner/repo format.";
 				case "RepoNotFound":
@@ -326,8 +326,36 @@ function AddRepoFormCompact() {
 					return "Repository is already connected.";
 				case "WebhookSetupFailed":
 					return "Added, but webhook setup failed.";
+				case "RpcDefectError": {
+					const defect = (e as { defect: unknown }).defect;
+					if (typeof defect === "string" && defect.length > 0) return defect;
+					if (
+						typeof defect === "object" &&
+						defect !== null &&
+						"name" in defect
+					) {
+						const name = String((defect as { name: unknown }).name);
+						const message =
+							"message" in defect
+								? String((defect as { message: unknown }).message)
+								: "";
+						return message.length > 0
+							? `${name}: ${message}`
+							: `Server error: ${name}`;
+					}
+					if (
+						typeof defect === "object" &&
+						defect !== null &&
+						"message" in defect
+					) {
+						const msg = String((defect as { message: unknown }).message);
+						if (msg.length > 0) return msg;
+					}
+					return "An unexpected error occurred.";
+				}
 			}
 		}
+		if (e instanceof Error && e.message.length > 0) return e.message;
 		return "Failed to add repository.";
 	})();
 
@@ -448,7 +476,7 @@ function ListPanel({
 			</div>
 
 			{/* List content */}
-			<ScrollArea className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-y-auto">
 				{tab === "pulls" ? (
 					<PrListPanel
 						owner={owner}
@@ -468,7 +496,7 @@ function ListPanel({
 						activeRunNumber={activeItemNumber}
 					/>
 				)}
-			</ScrollArea>
+			</div>
 		</div>
 	);
 }
@@ -782,7 +810,7 @@ function DetailPanel({
 	itemNumber: number;
 }) {
 	return (
-		<ScrollArea className="h-full overflow-hidden">
+		<div className="h-full overflow-y-auto">
 			<div className="p-4">
 				{tab === "pulls" ? (
 					<PrDetailContent owner={owner} name={name} prNumber={itemNumber} />
@@ -800,7 +828,7 @@ function DetailPanel({
 					/>
 				)}
 			</div>
-		</ScrollArea>
+		</div>
 	);
 }
 
@@ -2447,7 +2475,7 @@ export function HubLayout() {
 					<ResizableHandle />
 
 					{/* Panel 3: Detail/Content */}
-					<ResizablePanel defaultSize={54} minSize={30}>
+					<ResizablePanel defaultSize={54} minSize={30} className="min-w-0">
 						{owner && name && itemNumber !== null ? (
 							<DetailPanel
 								owner={owner}
@@ -2475,7 +2503,7 @@ export function HubLayout() {
 								Back to list
 							</Link>
 						</div>
-						<ScrollArea className="flex-1 overflow-hidden">
+						<div className="flex-1 overflow-y-auto">
 							<div className="p-3">
 								{tab === "pulls" ? (
 									<PrDetailContent
@@ -2497,7 +2525,7 @@ export function HubLayout() {
 									/>
 								)}
 							</div>
-						</ScrollArea>
+						</div>
 					</div>
 				) : owner && name ? (
 					<div className="flex h-full flex-col">

@@ -4,7 +4,6 @@ import { Result, useAtom, useAtomValue } from "@effect-atom/atom-react";
 import { Button } from "@packages/ui/components/button";
 import { Input } from "@packages/ui/components/input";
 import { Link } from "@packages/ui/components/link";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { Skeleton } from "@packages/ui/components/skeleton";
 import { UserButton } from "@packages/ui/components/user-button";
 import { cn } from "@packages/ui/lib/utils";
@@ -35,7 +34,7 @@ export default function SidebarSlot() {
 				<h2 className="text-sm font-semibold text-foreground">Repositories</h2>
 				<AddRepoForm />
 			</div>
-			<ScrollArea className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-y-auto">
 				<div className="p-1">
 					{Result.isInitial(reposResult) && (
 						<div className="space-y-2 p-2">
@@ -92,7 +91,7 @@ export default function SidebarSlot() {
 						});
 					})()}
 				</div>
-			</ScrollArea>
+			</div>
 
 			{/* Auth state — pinned to bottom-left */}
 			<div className="shrink-0 border-t px-3 py-2">
@@ -125,18 +124,34 @@ function AddRepoForm() {
 					return "Added, but webhook setup failed.";
 				case "RpcDefectError": {
 					const defect = (e as { defect: unknown }).defect;
-					if (typeof defect === "string") return defect;
+					if (typeof defect === "string" && defect.length > 0) return defect;
+					if (
+						typeof defect === "object" &&
+						defect !== null &&
+						"name" in defect
+					) {
+						const name = String((defect as { name: unknown }).name);
+						const message =
+							"message" in defect
+								? String((defect as { message: unknown }).message)
+								: "";
+						return message.length > 0
+							? `${name}: ${message}`
+							: `Server error: ${name}`;
+					}
 					if (
 						typeof defect === "object" &&
 						defect !== null &&
 						"message" in defect
-					)
-						return String((defect as { message: unknown }).message);
+					) {
+						const msg = String((defect as { message: unknown }).message);
+						if (msg.length > 0) return msg;
+					}
 					return "An unexpected error occurred.";
 				}
 			}
 		}
-		if (e instanceof Error) return e.message;
+		if (e instanceof Error && e.message.length > 0) return e.message;
 		return "Failed to add repository.";
 	})();
 

@@ -6,7 +6,6 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@packages/ui/components/resizable";
-import { ScrollArea } from "@packages/ui/components/scroll-area";
 import { ArrowLeft } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -99,7 +98,7 @@ export function HubShell({
 								Back to list
 							</Link>
 						</div>
-						<ScrollArea className="flex-1 overflow-hidden">{detail}</ScrollArea>
+						<div className="flex-1 overflow-y-auto">{detail}</div>
 					</div>
 				) : owner && name ? (
 					<div className="flex h-full flex-col">

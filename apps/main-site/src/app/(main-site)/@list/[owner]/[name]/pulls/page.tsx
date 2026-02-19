@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { ListSkeleton } from "../../../../_components/skeletons";
 import { PrListClient } from "./pr-list-client";
 
 export default async function PrListSlot(props: {
@@ -14,7 +15,7 @@ export default async function PrListSlot(props: {
 	});
 
 	return (
-		<Suspense>
+		<Suspense fallback={<ListSkeleton />}>
 			<PrListClient owner={owner} name={name} initialDataPromise={prsPromise} />
 		</Suspense>
 	);
