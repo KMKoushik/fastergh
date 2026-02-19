@@ -85,6 +85,7 @@ function SidebarProvider({
 		[setOpenProp, open],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: shadcn component, deps are intentional
 	const toggleSidebar = React.useCallback(() => {
 		return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
 	}, [isMobile, setOpen, setOpenMobile]);
@@ -106,6 +107,7 @@ function SidebarProvider({
 
 	const state = open ? "expanded" : "collapsed";
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: shadcn component, deps are intentional
 	const contextValue = React.useMemo<SidebarContextProps>(
 		() => ({
 			state,

@@ -1,5 +1,6 @@
 import { Providers } from "@packages/ui/components/providers";
 import type { Metadata } from "next";
+import { HubLayoutWrapper } from "./hub-layout-wrapper";
 
 export const metadata: Metadata = {
 	title: "QuickHub — GitHub Mirror",
@@ -11,5 +12,11 @@ export default function MainSiteLayout({
 }: {
 	children: React.ReactNode;
 }) {
-	return <Providers>{children}</Providers>;
+	return (
+		<Providers>
+			<HubLayoutWrapper />
+			{/* Route pages exist for URL resolution but are hidden */}
+			<div className="hidden">{children}</div>
+		</Providers>
+	);
 }

@@ -1,7 +1,13 @@
 import { createRpcFactory, makeRpcModule } from "@packages/confect/rpc";
 import { Effect, Option, Schema } from "effect";
 import { ConfectMutationCtx, confectSchema } from "../confect";
-import { updateAllProjections } from "../shared/projections";
+import {
+	updateAllProjections,
+	updateIssueList,
+	updatePullRequestList,
+	updateRepoOverview,
+	updateWorkflowRunList,
+} from "../shared/projections";
 import { DatabaseRpcTelemetryLayer } from "./telemetry";
 
 const factory = createRpcFactory({ schema: confectSchema });
@@ -142,6 +148,57 @@ const upsertCheckRunsDef = factory.internalMutation({
 });
 
 /**
+ * Upsert a batch of workflow runs for a repository.
+ */
+const upsertWorkflowRunsDef = factory.internalMutation({
+	payload: {
+		repositoryId: Schema.Number,
+		workflowRuns: Schema.Array(
+			Schema.Struct({
+				githubRunId: Schema.Number,
+				workflowId: Schema.Number,
+				workflowName: Schema.NullOr(Schema.String),
+				runNumber: Schema.Number,
+				runAttempt: Schema.Number,
+				event: Schema.String,
+				status: Schema.NullOr(Schema.String),
+				conclusion: Schema.NullOr(Schema.String),
+				headBranch: Schema.NullOr(Schema.String),
+				headSha: Schema.String,
+				actorUserId: Schema.NullOr(Schema.Number),
+				htmlUrl: Schema.NullOr(Schema.String),
+				createdAt: Schema.Number,
+				updatedAt: Schema.Number,
+			}),
+		),
+	},
+	success: Schema.Struct({ upserted: Schema.Number }),
+});
+
+/**
+ * Upsert a batch of workflow jobs for a repository.
+ */
+const upsertWorkflowJobsDef = factory.internalMutation({
+	payload: {
+		repositoryId: Schema.Number,
+		workflowJobs: Schema.Array(
+			Schema.Struct({
+				githubJobId: Schema.Number,
+				githubRunId: Schema.Number,
+				name: Schema.String,
+				status: Schema.String,
+				conclusion: Schema.NullOr(Schema.String),
+				startedAt: Schema.NullOr(Schema.Number),
+				completedAt: Schema.NullOr(Schema.Number),
+				runnerName: Schema.NullOr(Schema.String),
+				stepsJson: Schema.NullOr(Schema.String),
+			}),
+		),
+	},
+	success: Schema.Struct({ upserted: Schema.Number }),
+});
+
+/**
  * Mark a sync job as complete or failed.
  */
 const updateSyncJobStateDef = factory.internalMutation({
@@ -235,6 +292,10 @@ upsertPullRequestsDef.implement((args) =>
 			upserted++;
 		}
 
+		// Incrementally update projections so subscriptions push new data to the UI
+		yield* updatePullRequestList(args.repositoryId).pipe(Effect.ignoreLogged);
+		yield* updateRepoOverview(args.repositoryId).pipe(Effect.ignoreLogged);
+
 		return { upserted };
 	}),
 );
@@ -279,6 +340,10 @@ upsertIssuesDef.implement((args) =>
 			}
 			upserted++;
 		}
+
+		// Incrementally update projections so subscriptions push new data to the UI
+		yield* updateIssueList(args.repositoryId).pipe(Effect.ignoreLogged);
+		yield* updateRepoOverview(args.repositoryId).pipe(Effect.ignoreLogged);
 
 		return { upserted };
 	}),
@@ -407,6 +472,103 @@ upsertCheckRunsDef.implement((args) =>
 			upserted++;
 		}
 
+		// Check runs affect PR list view (lastCheckConclusion) and overview (failingCheckCount)
+		yield* updatePullRequestList(args.repositoryId).pipe(Effect.ignoreLogged);
+		yield* updateRepoOverview(args.repositoryId).pipe(Effect.ignoreLogged);
+
+		return { upserted };
+	}),
+);
+
+upsertWorkflowRunsDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		let upserted = 0;
+
+		for (const run of args.workflowRuns) {
+			const existing = yield* ctx.db
+				.query("github_workflow_runs")
+				.withIndex("by_repositoryId_and_githubRunId", (q) =>
+					q
+						.eq("repositoryId", args.repositoryId)
+						.eq("githubRunId", run.githubRunId),
+				)
+				.first();
+
+			const data = {
+				repositoryId: args.repositoryId,
+				githubRunId: run.githubRunId,
+				workflowId: run.workflowId,
+				workflowName: run.workflowName,
+				runNumber: run.runNumber,
+				runAttempt: run.runAttempt,
+				event: run.event,
+				status: run.status,
+				conclusion: run.conclusion,
+				headBranch: run.headBranch,
+				headSha: run.headSha,
+				actorUserId: run.actorUserId,
+				htmlUrl: run.htmlUrl,
+				createdAt: run.createdAt,
+				updatedAt: run.updatedAt,
+			};
+
+			if (Option.isSome(existing)) {
+				if (run.updatedAt >= existing.value.updatedAt) {
+					yield* ctx.db.patch(existing.value._id, data);
+				}
+			} else {
+				yield* ctx.db.insert("github_workflow_runs", data);
+			}
+			upserted++;
+		}
+
+		// Incrementally update workflow run projection
+		yield* updateWorkflowRunList(args.repositoryId).pipe(Effect.ignoreLogged);
+
+		return { upserted };
+	}),
+);
+
+upsertWorkflowJobsDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		let upserted = 0;
+
+		for (const job of args.workflowJobs) {
+			const existing = yield* ctx.db
+				.query("github_workflow_jobs")
+				.withIndex("by_repositoryId_and_githubJobId", (q) =>
+					q
+						.eq("repositoryId", args.repositoryId)
+						.eq("githubJobId", job.githubJobId),
+				)
+				.first();
+
+			const data = {
+				repositoryId: args.repositoryId,
+				githubJobId: job.githubJobId,
+				githubRunId: job.githubRunId,
+				name: job.name,
+				status: job.status,
+				conclusion: job.conclusion,
+				startedAt: job.startedAt,
+				completedAt: job.completedAt,
+				runnerName: job.runnerName,
+				stepsJson: job.stepsJson,
+			};
+
+			if (Option.isSome(existing)) {
+				yield* ctx.db.patch(existing.value._id, data);
+			} else {
+				yield* ctx.db.insert("github_workflow_jobs", data);
+			}
+			upserted++;
+		}
+
+		// Job counts feed into the workflow run list view
+		yield* updateWorkflowRunList(args.repositoryId).pipe(Effect.ignoreLogged);
+
 		return { upserted };
 	}),
 );
@@ -457,6 +619,8 @@ const bootstrapWriteModule = makeRpcModule(
 		upsertIssues: upsertIssuesDef,
 		upsertCommits: upsertCommitsDef,
 		upsertCheckRuns: upsertCheckRunsDef,
+		upsertWorkflowRuns: upsertWorkflowRunsDef,
+		upsertWorkflowJobs: upsertWorkflowJobsDef,
 		upsertUsers: upsertUsersDef,
 		updateSyncJobState: updateSyncJobStateDef,
 	},
@@ -469,6 +633,8 @@ export const {
 	upsertIssues,
 	upsertCommits,
 	upsertCheckRuns,
+	upsertWorkflowRuns,
+	upsertWorkflowJobs,
 	upsertUsers,
 	updateSyncJobState,
 } = bootstrapWriteModule.handlers;

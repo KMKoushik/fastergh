@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 
+// Redirect bare /{owner}/{name} to /{owner}/{name}/pulls
 export default async function RepoPage(props: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
-	const params = await props.params;
-	redirect(`/${params.owner}/${params.name}/pulls`);
+	const { owner, name } = await props.params;
+	redirect(`/${owner}/${name}/pulls`);
 }

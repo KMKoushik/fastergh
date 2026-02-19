@@ -46,6 +46,7 @@ function formatRelative(timestamp: number): string {
 const TABS = [
 	{ label: "Pull Requests", segment: "pulls" },
 	{ label: "Issues", segment: "issues" },
+	{ label: "Actions", segment: "actions" },
 	{ label: "Activity", segment: "activity" },
 ] as const;
 

@@ -2,6 +2,7 @@ import { createRpcFactory, makeRpcModule } from "@packages/confect/rpc";
 import { Effect, Option, Schema } from "effect";
 import { internal } from "../_generated/api";
 import { ConfectMutationCtx, confectSchema } from "../confect";
+import { updateRepoOverview } from "../shared/projections";
 import { DatabaseRpcTelemetryLayer } from "./telemetry";
 
 const factory = createRpcFactory({ schema: confectSchema });
@@ -180,6 +181,10 @@ connectRepoDef.implement((args) =>
 		} else {
 			syncJobId = String(existingJob.value._id);
 		}
+
+		// Create the initial overview projection so the repo appears in
+		// the dashboard immediately (with zeroed-out counts).
+		yield* updateRepoOverview(args.githubRepoId).pipe(Effect.ignoreLogged);
 
 		return {
 			repositoryId: args.githubRepoId,

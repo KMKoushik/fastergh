@@ -550,6 +550,110 @@ const handleCheckRunEvent = (
 	});
 
 /**
+ * Handle `workflow_run` events: requested, in_progress, completed
+ */
+const handleWorkflowRunEvent = (
+	payload: Record<string, unknown>,
+	repositoryId: number,
+) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		const now = Date.now();
+		const workflowRun = obj(payload.workflow_run);
+		const githubRunId = num(workflowRun.id);
+		const workflowId = num(workflowRun.workflow_id);
+		const runNumber = num(workflowRun.run_number);
+
+		if (githubRunId === null || workflowId === null || runNumber === null)
+			return;
+
+		// Upsert actor
+		const actorUser = extractUser(workflowRun.actor);
+		if (actorUser) yield* upsertUser(actorUser);
+
+		const data = {
+			repositoryId,
+			githubRunId,
+			workflowId,
+			workflowName: str(workflowRun.name),
+			runNumber,
+			runAttempt: num(workflowRun.run_attempt) ?? 1,
+			event: str(workflowRun.event) ?? "unknown",
+			status: str(workflowRun.status),
+			conclusion: str(workflowRun.conclusion),
+			headBranch: str(workflowRun.head_branch),
+			headSha: str(workflowRun.head_sha) ?? "",
+			actorUserId: actorUser?.githubUserId ?? null,
+			htmlUrl: str(workflowRun.html_url),
+			createdAt: isoToMs(workflowRun.created_at) ?? now,
+			updatedAt: isoToMs(workflowRun.updated_at) ?? now,
+		};
+
+		const existing = yield* ctx.db
+			.query("github_workflow_runs")
+			.withIndex("by_repositoryId_and_githubRunId", (q) =>
+				q.eq("repositoryId", repositoryId).eq("githubRunId", githubRunId),
+			)
+			.first();
+
+		if (Option.isSome(existing)) {
+			if (data.updatedAt >= existing.value.updatedAt) {
+				yield* ctx.db.patch(existing.value._id, data);
+			}
+		} else {
+			yield* ctx.db.insert("github_workflow_runs", data);
+		}
+	});
+
+/**
+ * Handle `workflow_job` events: queued, in_progress, completed, waiting
+ */
+const handleWorkflowJobEvent = (
+	payload: Record<string, unknown>,
+	repositoryId: number,
+) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		const workflowJob = obj(payload.workflow_job);
+		const githubJobId = num(workflowJob.id);
+		const githubRunId = num(workflowJob.run_id);
+		const name = str(workflowJob.name);
+
+		if (githubJobId === null || githubRunId === null || !name) return;
+
+		// Serialize steps as JSON (steps have name, status, conclusion, etc.)
+		const steps = Array.isArray(workflowJob.steps)
+			? JSON.stringify(workflowJob.steps)
+			: null;
+
+		const data = {
+			repositoryId,
+			githubJobId,
+			githubRunId,
+			name,
+			status: str(workflowJob.status) ?? "queued",
+			conclusion: str(workflowJob.conclusion),
+			startedAt: isoToMs(workflowJob.started_at),
+			completedAt: isoToMs(workflowJob.completed_at),
+			runnerName: str(workflowJob.runner_name),
+			stepsJson: steps,
+		};
+
+		const existing = yield* ctx.db
+			.query("github_workflow_jobs")
+			.withIndex("by_repositoryId_and_githubJobId", (q) =>
+				q.eq("repositoryId", repositoryId).eq("githubJobId", githubJobId),
+			)
+			.first();
+
+		if (Option.isSome(existing)) {
+			yield* ctx.db.patch(existing.value._id, data);
+		} else {
+			yield* ctx.db.insert("github_workflow_jobs", data);
+		}
+	});
+
+/**
  * Handle `delete` events — branch or tag deleted
  */
 const handleDeleteEvent = (
@@ -597,6 +701,12 @@ const dispatchHandler = (
 			handlePullRequestReviewEvent(payload, repositoryId),
 		),
 		Match.when("check_run", () => handleCheckRunEvent(payload, repositoryId)),
+		Match.when("workflow_run", () =>
+			handleWorkflowRunEvent(payload, repositoryId),
+		),
+		Match.when("workflow_job", () =>
+			handleWorkflowJobEvent(payload, repositoryId),
+		),
 		Match.when("create", () => handleCreateEvent(payload, repositoryId)),
 		Match.when("delete", () => handleDeleteEvent(payload, repositoryId)),
 		Match.orElse(() => Effect.void),
@@ -715,6 +825,22 @@ const extractActivityInfo = (
 			return {
 				activityType: `check_run.${conclusion ?? "completed"}`,
 				title: name,
+				description: conclusion ? `Conclusion: ${conclusion}` : null,
+				actorLogin,
+				actorAvatarUrl,
+				entityNumber: null,
+			};
+		}),
+		Match.when("workflow_run", () => {
+			const workflowRun = obj(payload.workflow_run);
+			const name = str(workflowRun.name) ?? "Workflow";
+			const conclusion = str(workflowRun.conclusion);
+			const runNumber = num(workflowRun.run_number);
+			// Only emit activity for completed workflow runs
+			if (action !== "completed") return null;
+			return {
+				activityType: `workflow_run.${conclusion ?? "completed"}`,
+				title: `${name} #${runNumber ?? "?"}`,
 				description: conclusion ? `Conclusion: ${conclusion}` : null,
 				actorLogin,
 				actorAvatarUrl,

@@ -255,6 +255,38 @@ const GitHubCheckRunSchema = Schema.Struct({
 	completedAt: Schema.NullOr(Schema.Number),
 });
 
+const GitHubWorkflowRunSchema = Schema.Struct({
+	repositoryId: Schema.Number,
+	githubRunId: Schema.Number,
+	workflowId: Schema.Number,
+	workflowName: Schema.NullOr(Schema.String),
+	runNumber: Schema.Number,
+	runAttempt: Schema.Number,
+	event: Schema.String,
+	status: Schema.NullOr(Schema.String),
+	conclusion: Schema.NullOr(Schema.String),
+	headBranch: Schema.NullOr(Schema.String),
+	headSha: Schema.String,
+	actorUserId: Schema.NullOr(Schema.Number),
+	htmlUrl: Schema.NullOr(Schema.String),
+	createdAt: Schema.Number,
+	updatedAt: Schema.Number,
+});
+
+const GitHubWorkflowJobSchema = Schema.Struct({
+	repositoryId: Schema.Number,
+	githubJobId: Schema.Number,
+	githubRunId: Schema.Number,
+	name: Schema.String,
+	status: Schema.String,
+	conclusion: Schema.NullOr(Schema.String),
+	startedAt: Schema.NullOr(Schema.Number),
+	completedAt: Schema.NullOr(Schema.Number),
+	runnerName: Schema.NullOr(Schema.String),
+	/** Serialized JSON array of step objects */
+	stepsJson: Schema.NullOr(Schema.String),
+});
+
 // ============================================================
 // C) UI Read Projection Tables
 // ============================================================
@@ -301,6 +333,25 @@ const ViewRepoIssueListSchema = Schema.Struct({
 	labelNames: Schema.Array(Schema.String),
 	commentCount: Schema.Number,
 	githubUpdatedAt: Schema.Number,
+	sortUpdated: Schema.Number,
+});
+
+const ViewRepoWorkflowRunListSchema = Schema.Struct({
+	repositoryId: Schema.Number,
+	githubRunId: Schema.Number,
+	workflowName: Schema.NullOr(Schema.String),
+	runNumber: Schema.Number,
+	event: Schema.String,
+	status: Schema.NullOr(Schema.String),
+	conclusion: Schema.NullOr(Schema.String),
+	headBranch: Schema.NullOr(Schema.String),
+	headSha: Schema.String,
+	actorLogin: Schema.NullOr(Schema.String),
+	actorAvatarUrl: Schema.NullOr(Schema.String),
+	jobCount: Schema.Number,
+	htmlUrl: Schema.NullOr(Schema.String),
+	createdAt: Schema.Number,
+	updatedAt: Schema.Number,
 	sortUpdated: Schema.Number,
 });
 
@@ -442,6 +493,14 @@ export const confectSchema = defineSchema({
 		])
 		.index("by_repositoryId_and_headSha", ["repositoryId", "headSha"]),
 
+	github_workflow_runs: defineTable(GitHubWorkflowRunSchema)
+		.index("by_repositoryId_and_githubRunId", ["repositoryId", "githubRunId"])
+		.index("by_repositoryId_and_updatedAt", ["repositoryId", "updatedAt"]),
+
+	github_workflow_jobs: defineTable(GitHubWorkflowJobSchema)
+		.index("by_repositoryId_and_githubJobId", ["repositoryId", "githubJobId"])
+		.index("by_repositoryId_and_githubRunId", ["repositoryId", "githubRunId"]),
+
 	// C) UI Read Projections
 	view_repo_overview: defineTable(ViewRepoOverviewSchema).index(
 		"by_repositoryId",
@@ -461,6 +520,14 @@ export const confectSchema = defineSchema({
 		.index("by_repositoryId_and_state_and_sortUpdated", [
 			"repositoryId",
 			"state",
+			"sortUpdated",
+		]),
+
+	view_repo_workflow_run_list: defineTable(ViewRepoWorkflowRunListSchema)
+		.index("by_repositoryId_and_sortUpdated", ["repositoryId", "sortUpdated"])
+		.index("by_repositoryId_and_conclusion_and_sortUpdated", [
+			"repositoryId",
+			"conclusion",
 			"sortUpdated",
 		]),
 

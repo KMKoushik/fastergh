@@ -172,6 +172,16 @@ code {
 	max-width: 100%;
 }
 
+/* diffs-container is a custom element — ensure it respects parent width constraints */
+diffs-container {
+	display: block;
+	min-width: 0;
+	max-width: 100%;
+	/* Let the browser skip rendering for offscreen diffs */
+	content-visibility: auto;
+	contain-intrinsic-size: auto 200px;
+}
+
 /* Prose images and tables should not blow out the container */
 .prose img,
 .prose table {

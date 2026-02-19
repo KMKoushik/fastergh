@@ -138,6 +138,7 @@ function Calendar({
 						return ref !== null && typeof ref === "object" && "current" in ref;
 					};
 
+					// biome-ignore lint/correctness/useExhaustiveDependencies: shadcn component, isRefObject is stable
 					const refCallback = React.useCallback(
 						(element: HTMLDivElement | null) => {
 							if (!rootRef) return;

@@ -292,6 +292,97 @@ export const updateIssueList = (repositoryId: number) =>
 	});
 
 // ---------------------------------------------------------------------------
+// view_repo_workflow_run_list — flattened workflow run list cards
+// ---------------------------------------------------------------------------
+
+export const updateWorkflowRunList = (repositoryId: number) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+
+		// Get all workflow runs for the repo
+		const runs = yield* ctx.db
+			.query("github_workflow_runs")
+			.withIndex("by_repositoryId_and_updatedAt", (q) =>
+				q.eq("repositoryId", repositoryId),
+			)
+			.collect();
+
+		// Pre-load users for actor lookups
+		const userIds = [
+			...new Set(runs.map((r) => r.actorUserId).filter((id) => id !== null)),
+		];
+		const userMap = new Map<
+			number,
+			{ login: string; avatarUrl: string | null }
+		>();
+		for (const userId of userIds) {
+			const user = yield* ctx.db
+				.query("github_users")
+				.withIndex("by_githubUserId", (q) => q.eq("githubUserId", userId))
+				.first();
+			if (Option.isSome(user)) {
+				userMap.set(userId, {
+					login: user.value.login,
+					avatarUrl: user.value.avatarUrl,
+				});
+			}
+		}
+
+		// Count jobs per run
+		const allJobs = yield* ctx.db
+			.query("github_workflow_jobs")
+			.withIndex("by_repositoryId_and_githubRunId", (q) =>
+				q.eq("repositoryId", repositoryId),
+			)
+			.collect();
+
+		const jobCountByRun = new Map<number, number>();
+		for (const job of allJobs) {
+			jobCountByRun.set(
+				job.githubRunId,
+				(jobCountByRun.get(job.githubRunId) ?? 0) + 1,
+			);
+		}
+
+		// Delete existing view rows for this repo
+		const existingViews = yield* ctx.db
+			.query("view_repo_workflow_run_list")
+			.withIndex("by_repositoryId_and_sortUpdated", (q) =>
+				q.eq("repositoryId", repositoryId),
+			)
+			.collect();
+
+		for (const v of existingViews) {
+			yield* ctx.db.delete(v._id);
+		}
+
+		// Insert fresh rows
+		for (const run of runs) {
+			const actor =
+				run.actorUserId !== null ? userMap.get(run.actorUserId) : undefined;
+
+			yield* ctx.db.insert("view_repo_workflow_run_list", {
+				repositoryId,
+				githubRunId: run.githubRunId,
+				workflowName: run.workflowName,
+				runNumber: run.runNumber,
+				event: run.event,
+				status: run.status,
+				conclusion: run.conclusion,
+				headBranch: run.headBranch,
+				headSha: run.headSha,
+				actorLogin: actor?.login ?? null,
+				actorAvatarUrl: actor?.avatarUrl ?? null,
+				jobCount: jobCountByRun.get(run.githubRunId) ?? 0,
+				htmlUrl: run.htmlUrl,
+				createdAt: run.createdAt,
+				updatedAt: run.updatedAt,
+				sortUpdated: run.updatedAt,
+			});
+		}
+	});
+
+// ---------------------------------------------------------------------------
 // view_activity_feed — normalized activity events from webhook events
 // ---------------------------------------------------------------------------
 
@@ -329,5 +420,6 @@ export const updateAllProjections = (repositoryId: number) =>
 		yield* updateRepoOverview(repositoryId);
 		yield* updatePullRequestList(repositoryId);
 		yield* updateIssueList(repositoryId);
+		yield* updateWorkflowRunList(repositoryId);
 		// Activity feed is append-only — handled separately per event
 	});

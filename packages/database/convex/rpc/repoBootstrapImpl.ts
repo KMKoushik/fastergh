@@ -366,6 +366,151 @@ bootstrapRepoDef.implement((args) =>
 				});
 			}
 
+			// --- Fetch recent workflow runs (last 100) ---
+			const allWorkflowRuns: Array<{
+				githubRunId: number;
+				workflowId: number;
+				workflowName: string | null;
+				runNumber: number;
+				runAttempt: number;
+				event: string;
+				status: string | null;
+				conclusion: string | null;
+				headBranch: string | null;
+				headSha: string;
+				actorUserId: number | null;
+				htmlUrl: string | null;
+				createdAt: number;
+				updatedAt: number;
+			}> = [];
+
+			yield* gh.use(async (fetch) => {
+				const res = await fetch(
+					`/repos/${args.fullName}/actions/runs?per_page=100`,
+				);
+				if (!res.ok) {
+					// Non-critical — some repos may not use Actions
+					if (res.status === 404) return;
+					throw new GitHubApiError({
+						status: res.status,
+						message: await res.text(),
+						url: res.url,
+					});
+				}
+				const data = (await res.json()) as Record<string, unknown>;
+				const runs = Array.isArray(data.workflow_runs)
+					? data.workflow_runs
+					: [];
+				for (const r of runs) {
+					const rObj =
+						typeof r === "object" && r !== null
+							? (r as Record<string, unknown>)
+							: {};
+					const id = num(rObj.id);
+					const workflowId = num(rObj.workflow_id);
+					const runNumber = num(rObj.run_number);
+					if (id !== null && workflowId !== null && runNumber !== null) {
+						const actorUserId = collectUser(rObj.actor);
+						allWorkflowRuns.push({
+							githubRunId: id,
+							workflowId,
+							workflowName: str(rObj.name),
+							runNumber,
+							runAttempt: num(rObj.run_attempt) ?? 1,
+							event: str(rObj.event) ?? "unknown",
+							status: str(rObj.status),
+							conclusion: str(rObj.conclusion),
+							headBranch: str(rObj.head_branch),
+							headSha: str(rObj.head_sha) ?? "",
+							actorUserId,
+							htmlUrl: str(rObj.html_url),
+							createdAt: isoToMs(rObj.created_at) ?? Date.now(),
+							updatedAt: isoToMs(rObj.updated_at) ?? Date.now(),
+						});
+					}
+				}
+			});
+
+			// Write workflow runs in batches
+			for (let i = 0; i < allWorkflowRuns.length; i += 50) {
+				yield* ctx.runMutation(internal.rpc.bootstrapWrite.upsertWorkflowRuns, {
+					repositoryId: args.githubRepoId,
+					workflowRuns: allWorkflowRuns.slice(i, i + 50),
+				});
+			}
+
+			// --- Fetch jobs for in-progress/recent workflow runs ---
+			const activeRunIds = allWorkflowRuns
+				.filter(
+					(r) =>
+						r.status === "in_progress" ||
+						r.status === "queued" ||
+						r.conclusion !== null,
+				)
+				.slice(0, 20) // Limit API calls — only fetch jobs for the 20 most recent
+				.map((r) => r.githubRunId);
+
+			const allWorkflowJobs: Array<{
+				githubJobId: number;
+				githubRunId: number;
+				name: string;
+				status: string;
+				conclusion: string | null;
+				startedAt: number | null;
+				completedAt: number | null;
+				runnerName: string | null;
+				stepsJson: string | null;
+			}> = [];
+
+			for (const runId of activeRunIds) {
+				yield* gh.use(async (fetch) => {
+					const res = await fetch(
+						`/repos/${args.fullName}/actions/runs/${runId}/jobs?per_page=100`,
+					);
+					if (!res.ok) {
+						if (res.status === 404) return;
+						throw new GitHubApiError({
+							status: res.status,
+							message: await res.text(),
+							url: res.url,
+						});
+					}
+					const data = (await res.json()) as Record<string, unknown>;
+					const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+					for (const j of jobs) {
+						const jObj =
+							typeof j === "object" && j !== null
+								? (j as Record<string, unknown>)
+								: {};
+						const jobId = num(jObj.id);
+						const name = str(jObj.name);
+						if (jobId !== null && name !== null) {
+							allWorkflowJobs.push({
+								githubJobId: jobId,
+								githubRunId: runId,
+								name,
+								status: str(jObj.status) ?? "queued",
+								conclusion: str(jObj.conclusion),
+								startedAt: isoToMs(jObj.started_at),
+								completedAt: isoToMs(jObj.completed_at),
+								runnerName: str(jObj.runner_name),
+								stepsJson: Array.isArray(jObj.steps)
+									? JSON.stringify(jObj.steps)
+									: null,
+							});
+						}
+					}
+				});
+			}
+
+			// Write workflow jobs in batches
+			for (let i = 0; i < allWorkflowJobs.length; i += 50) {
+				yield* ctx.runMutation(internal.rpc.bootstrapWrite.upsertWorkflowJobs, {
+					repositoryId: args.githubRepoId,
+					workflowJobs: allWorkflowJobs.slice(i, i + 50),
+				});
+			}
+
 			// --- Upsert collected users ---
 			const users = [...userMap.values()];
 			if (users.length > 0) {
@@ -390,6 +535,8 @@ bootstrapRepoDef.implement((args) =>
 				issues: issues.length,
 				commits: commits.length,
 				checkRuns: allCheckRuns.length,
+				workflowRuns: allWorkflowRuns.length,
+				workflowJobs: allWorkflowJobs.length,
 				users: users.length,
 				openPrSyncTargets,
 			};

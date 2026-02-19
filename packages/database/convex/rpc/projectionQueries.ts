@@ -242,6 +242,105 @@ const listActivityPaginatedDef = factory.query({
 	success: PaginationResultSchema(ActivityListItem),
 });
 
+/**
+ * Get workflow run list for a repository.
+ */
+const listWorkflowRunsDef = factory.query({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+	},
+	success: Schema.Array(
+		Schema.Struct({
+			githubRunId: Schema.Number,
+			workflowName: Schema.NullOr(Schema.String),
+			runNumber: Schema.Number,
+			event: Schema.String,
+			status: Schema.NullOr(Schema.String),
+			conclusion: Schema.NullOr(Schema.String),
+			headBranch: Schema.NullOr(Schema.String),
+			headSha: Schema.String,
+			actorLogin: Schema.NullOr(Schema.String),
+			actorAvatarUrl: Schema.NullOr(Schema.String),
+			jobCount: Schema.Number,
+			htmlUrl: Schema.NullOr(Schema.String),
+			createdAt: Schema.Number,
+			updatedAt: Schema.Number,
+		}),
+	),
+});
+
+const WorkflowRunListItem = Schema.Struct({
+	githubRunId: Schema.Number,
+	workflowName: Schema.NullOr(Schema.String),
+	runNumber: Schema.Number,
+	event: Schema.String,
+	status: Schema.NullOr(Schema.String),
+	conclusion: Schema.NullOr(Schema.String),
+	headBranch: Schema.NullOr(Schema.String),
+	headSha: Schema.String,
+	actorLogin: Schema.NullOr(Schema.String),
+	actorAvatarUrl: Schema.NullOr(Schema.String),
+	jobCount: Schema.Number,
+	htmlUrl: Schema.NullOr(Schema.String),
+	createdAt: Schema.Number,
+	updatedAt: Schema.Number,
+});
+
+/**
+ * Paginated workflow run list.
+ */
+const listWorkflowRunsPaginatedDef = factory.query({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+		...PaginationOptionsSchema.fields,
+	},
+	success: PaginationResultSchema(WorkflowRunListItem),
+});
+
+const WorkflowJobSchema = Schema.Struct({
+	githubJobId: Schema.Number,
+	name: Schema.String,
+	status: Schema.String,
+	conclusion: Schema.NullOr(Schema.String),
+	startedAt: Schema.NullOr(Schema.Number),
+	completedAt: Schema.NullOr(Schema.Number),
+	runnerName: Schema.NullOr(Schema.String),
+	stepsJson: Schema.NullOr(Schema.String),
+});
+
+/**
+ * Get full workflow run detail including jobs.
+ */
+const getWorkflowRunDetailDef = factory.query({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+		runNumber: Schema.Number,
+	},
+	success: Schema.NullOr(
+		Schema.Struct({
+			repositoryId: Schema.Number,
+			githubRunId: Schema.Number,
+			workflowName: Schema.NullOr(Schema.String),
+			runNumber: Schema.Number,
+			runAttempt: Schema.Number,
+			event: Schema.String,
+			status: Schema.NullOr(Schema.String),
+			conclusion: Schema.NullOr(Schema.String),
+			headBranch: Schema.NullOr(Schema.String),
+			headSha: Schema.String,
+			actorLogin: Schema.NullOr(Schema.String),
+			actorAvatarUrl: Schema.NullOr(Schema.String),
+			htmlUrl: Schema.NullOr(Schema.String),
+			createdAt: Schema.Number,
+			updatedAt: Schema.Number,
+			jobs: Schema.Array(WorkflowJobSchema),
+		}),
+	),
+});
+
 // -- Shared sub-schemas for detail views ------------------------------------
 
 const CommentSchema = Schema.Struct({
@@ -932,6 +1031,151 @@ listActivityPaginatedDef.implement((args) =>
 );
 
 // ---------------------------------------------------------------------------
+// Workflow run implementations
+// ---------------------------------------------------------------------------
+
+listWorkflowRunsDef.implement((args) =>
+	Effect.gen(function* () {
+		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
+
+		const ctx = yield* ConfectQueryCtx;
+
+		const runs = yield* ctx.db
+			.query("view_repo_workflow_run_list")
+			.withIndex("by_repositoryId_and_sortUpdated", (q) =>
+				q.eq("repositoryId", repositoryId),
+			)
+			.order("desc")
+			.take(200);
+
+		return runs.map((r) => ({
+			githubRunId: r.githubRunId,
+			workflowName: r.workflowName,
+			runNumber: r.runNumber,
+			event: r.event,
+			status: r.status,
+			conclusion: r.conclusion,
+			headBranch: r.headBranch,
+			headSha: r.headSha,
+			actorLogin: r.actorLogin,
+			actorAvatarUrl: r.actorAvatarUrl,
+			jobCount: r.jobCount,
+			htmlUrl: r.htmlUrl,
+			createdAt: r.createdAt,
+			updatedAt: r.updatedAt,
+		}));
+	}),
+);
+
+listWorkflowRunsPaginatedDef.implement((args) =>
+	Effect.gen(function* () {
+		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: Cursor.make(""),
+			};
+		}
+
+		const ctx = yield* ConfectQueryCtx;
+		const paginationOpts = {
+			cursor: args.cursor ?? null,
+			numItems: args.numItems,
+		};
+
+		const result = yield* ctx.db
+			.query("view_repo_workflow_run_list")
+			.withIndex("by_repositoryId_and_sortUpdated", (q) =>
+				q.eq("repositoryId", repositoryId),
+			)
+			.order("desc")
+			.paginate(paginationOpts);
+
+		return {
+			page: result.page.map((r) => ({
+				githubRunId: r.githubRunId,
+				workflowName: r.workflowName,
+				runNumber: r.runNumber,
+				event: r.event,
+				status: r.status,
+				conclusion: r.conclusion,
+				headBranch: r.headBranch,
+				headSha: r.headSha,
+				actorLogin: r.actorLogin,
+				actorAvatarUrl: r.actorAvatarUrl,
+				jobCount: r.jobCount,
+				htmlUrl: r.htmlUrl,
+				createdAt: r.createdAt,
+				updatedAt: r.updatedAt,
+			})),
+			isDone: result.isDone,
+			continueCursor: Cursor.make(result.continueCursor),
+		};
+	}),
+);
+
+getWorkflowRunDetailDef.implement((args) =>
+	Effect.gen(function* () {
+		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return null;
+
+		const ctx = yield* ConfectQueryCtx;
+
+		// Find the workflow run by runNumber — scan through all runs for this repo
+		const allRuns = yield* ctx.db
+			.query("github_workflow_runs")
+			.withIndex("by_repositoryId_and_updatedAt", (q) =>
+				q.eq("repositoryId", repositoryId),
+			)
+			.collect();
+
+		const run = allRuns.find((r) => r.runNumber === args.runNumber);
+		if (!run) return null;
+
+		// Resolve actor
+		const actor = yield* resolveUser(run.actorUserId);
+
+		// Get jobs for this run
+		const jobs = yield* ctx.db
+			.query("github_workflow_jobs")
+			.withIndex("by_repositoryId_and_githubRunId", (q) =>
+				q.eq("repositoryId", repositoryId).eq("githubRunId", run.githubRunId),
+			)
+			.collect();
+
+		return {
+			repositoryId,
+			githubRunId: run.githubRunId,
+			workflowName: run.workflowName,
+			runNumber: run.runNumber,
+			runAttempt: run.runAttempt,
+			event: run.event,
+			status: run.status,
+			conclusion: run.conclusion,
+			headBranch: run.headBranch,
+			headSha: run.headSha,
+			actorLogin: actor.login,
+			actorAvatarUrl: actor.avatarUrl,
+			htmlUrl: run.htmlUrl,
+			createdAt: run.createdAt,
+			updatedAt: run.updatedAt,
+			jobs: jobs.map((j) => ({
+				githubJobId: j.githubJobId,
+				name: j.name,
+				status: j.status,
+				conclusion: j.conclusion,
+				startedAt: j.startedAt,
+				completedAt: j.completedAt,
+				runnerName: j.runnerName,
+				stepsJson: j.stepsJson,
+			})),
+		};
+	}),
+);
+
+// ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
 
@@ -942,11 +1186,14 @@ const projectionQueriesModule = makeRpcModule(
 		listPullRequests: listPullRequestsDef,
 		listIssues: listIssuesDef,
 		listActivity: listActivityDef,
+		listWorkflowRuns: listWorkflowRunsDef,
 		listPullRequestsPaginated: listPullRequestsPaginatedDef,
 		listIssuesPaginated: listIssuesPaginatedDef,
 		listActivityPaginated: listActivityPaginatedDef,
+		listWorkflowRunsPaginated: listWorkflowRunsPaginatedDef,
 		getIssueDetail: getIssueDetailDef,
 		getPullRequestDetail: getPullRequestDetailDef,
+		getWorkflowRunDetail: getWorkflowRunDetailDef,
 		listPrFiles: listPrFilesDef,
 	},
 	{ middlewares: DatabaseRpcTelemetryLayer },
@@ -958,11 +1205,14 @@ export const {
 	listPullRequests,
 	listIssues,
 	listActivity,
+	listWorkflowRuns,
 	listPullRequestsPaginated,
 	listIssuesPaginated,
 	listActivityPaginated,
+	listWorkflowRunsPaginated,
 	getIssueDetail,
 	getPullRequestDetail,
+	getWorkflowRunDetail,
 	listPrFiles,
 } = projectionQueriesModule.handlers;
 export { projectionQueriesModule };
