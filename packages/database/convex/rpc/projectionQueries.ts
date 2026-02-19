@@ -361,6 +361,7 @@ const ReviewSchema = Schema.Struct({
 });
 
 const CheckRunSchema = Schema.Struct({
+	githubCheckRunId: Schema.Number,
 	name: Schema.String,
 	status: Schema.String,
 	conclusion: Schema.NullOr(Schema.String),
@@ -796,6 +797,7 @@ getPullRequestDetailDef.implement((args) =>
 			comments,
 			reviews,
 			checkRuns: checkRuns.map((cr) => ({
+				githubCheckRunId: cr.githubCheckRunId,
 				name: cr.name,
 				status: cr.status,
 				conclusion: cr.conclusion,

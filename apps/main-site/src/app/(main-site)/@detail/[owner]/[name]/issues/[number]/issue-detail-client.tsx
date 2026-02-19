@@ -17,7 +17,7 @@ import { useGithubWrite } from "@packages/ui/rpc/github-write";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { CheckCircle2, CircleDot } from "lucide-react";
 import { useId, useMemo, useState } from "react";
-import { Streamdown } from "streamdown";
+import { MarkdownBody } from "@/components/markdown-body";
 
 type IssueDetail = {
 	readonly repositoryId: number;
@@ -124,7 +124,7 @@ export function IssueDetailClient({
 					<Card className="mt-3">
 						<CardContent>
 							<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-sm leading-relaxed">
-								<Streamdown>{issue.body}</Streamdown>
+								<MarkdownBody>{issue.body}</MarkdownBody>
 							</div>
 						</CardContent>
 					</Card>
@@ -173,7 +173,7 @@ export function IssueDetailClient({
 									</CardHeader>
 									<CardContent>
 										<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed">
-											<Streamdown>{comment.body}</Streamdown>
+											<MarkdownBody>{comment.body}</MarkdownBody>
 										</div>
 									</CardContent>
 								</Card>

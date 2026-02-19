@@ -29,7 +29,11 @@ import {
 	ConfectQueryCtx,
 	confectSchema,
 } from "../confect";
-import { GitHubApiClient, GitHubApiError } from "../shared/githubApi";
+import {
+	GitHubApiClient,
+	GitHubApiError,
+	GitHubRateLimitError,
+} from "../shared/githubApi";
 import { updateAllProjections } from "../shared/projections";
 import { DatabaseRpcTelemetryLayer } from "./telemetry";
 
@@ -471,7 +475,12 @@ syncPullRequestDef.implement((args) =>
 				}
 				return (await res.json()) as Record<string, unknown>;
 			})
-			.pipe(Effect.catchTag("GitHubApiError", () => Effect.succeed(null)));
+			.pipe(
+				Effect.catchTags({
+					GitHubApiError: () => Effect.succeed(null),
+					GitHubRateLimitError: () => Effect.succeed(null),
+				}),
+			);
 
 		if (repoData === null) {
 			return yield* new RepoNotFoundOnGitHub({
@@ -539,7 +548,12 @@ syncPullRequestDef.implement((args) =>
 				}
 				return (await res.json()) as Record<string, unknown>;
 			})
-			.pipe(Effect.catchTag("GitHubApiError", () => Effect.succeed(null)));
+			.pipe(
+				Effect.catchTags({
+					GitHubApiError: () => Effect.succeed(null),
+					GitHubRateLimitError: () => Effect.succeed(null),
+				}),
+			);
 
 		if (prData === null) {
 			return yield* new EntityNotFound({
@@ -805,7 +819,12 @@ syncIssueDef.implement((args) =>
 				}
 				return (await res.json()) as Record<string, unknown>;
 			})
-			.pipe(Effect.catchTag("GitHubApiError", () => Effect.succeed(null)));
+			.pipe(
+				Effect.catchTags({
+					GitHubApiError: () => Effect.succeed(null),
+					GitHubRateLimitError: () => Effect.succeed(null),
+				}),
+			);
 
 		if (repoData === null) {
 			return yield* new RepoNotFoundOnGitHub({
@@ -873,7 +892,12 @@ syncIssueDef.implement((args) =>
 				}
 				return (await res.json()) as Record<string, unknown>;
 			})
-			.pipe(Effect.catchTag("GitHubApiError", () => Effect.succeed(null)));
+			.pipe(
+				Effect.catchTags({
+					GitHubApiError: () => Effect.succeed(null),
+					GitHubRateLimitError: () => Effect.succeed(null),
+				}),
+			);
 
 		if (issueData === null) {
 			return yield* new EntityNotFound({

@@ -20,7 +20,11 @@ import {
 	ConfectQueryCtx,
 	confectSchema,
 } from "../confect";
-import { GitHubApiClient, GitHubApiError } from "../shared/githubApi";
+import {
+	GitHubApiClient,
+	GitHubApiError,
+	GitHubRateLimitError,
+} from "../shared/githubApi";
 import { updateRepoOverview } from "../shared/projections";
 import { DatabaseRpcTelemetryLayer } from "./telemetry";
 
@@ -195,14 +199,12 @@ insertRepoAndBootstrapDef.implement((args) =>
 				updatedAt: now,
 			});
 
-			// Schedule bootstrap action
-			yield* Effect.promise(() =>
-				ctx.scheduler.runAfter(0, internal.rpc.repoBootstrap.bootstrapRepo, {
-					githubRepoId: args.githubRepoId,
-					fullName: args.fullName,
-					lockKey,
-				}),
-			);
+			// Start durable bootstrap workflow
+			yield* ctx.runMutation(internal.rpc.bootstrapWorkflow.startBootstrap, {
+				repositoryId: args.githubRepoId,
+				fullName: args.fullName,
+				lockKey,
+			});
 			bootstrapScheduled = true;
 		}
 
@@ -293,7 +295,12 @@ addRepoByUrlDef.implement((args) =>
 				}
 				return (await res.json()) as Record<string, unknown>;
 			})
-			.pipe(Effect.catchTag("GitHubApiError", () => Effect.succeed(null)));
+			.pipe(
+				Effect.catchTags({
+					GitHubApiError: () => Effect.succeed(null),
+					GitHubRateLimitError: () => Effect.succeed(null),
+				}),
+			);
 
 		if (repoData === null) {
 			return yield* new RepoNotFound({ fullName });
@@ -385,13 +392,20 @@ addRepoByUrlDef.implement((args) =>
 						return { created: true, alreadyExists: false };
 					})
 					.pipe(
-						Effect.catchTag("GitHubApiError", (e) =>
-							Effect.succeed({
-								created: false,
-								alreadyExists: false,
-								error: e.message,
-							}),
-						),
+						Effect.catchTags({
+							GitHubApiError: (e) =>
+								Effect.succeed({
+									created: false,
+									alreadyExists: false,
+									error: e.message,
+								}),
+							GitHubRateLimitError: (e) =>
+								Effect.succeed({
+									created: false,
+									alreadyExists: false,
+									error: `Rate limited: ${e.message}`,
+								}),
+						}),
 					);
 
 				if (

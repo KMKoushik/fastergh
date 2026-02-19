@@ -1,14 +1,9 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { IssueListClient } from "../../../../_components/issue-list-client";
 import { ListSkeleton } from "../../../../_components/skeletons";
-import { IssueListClient } from "./issue-list-client";
 
-/**
- * Fallback for the @list slot when navigating directly to /issues/[number].
- * On soft navigation (clicking a list item), Next.js keeps the existing
- * rendered page.tsx — this default.tsx is only used for hard navigation.
- */
-export default function IssueListDefault(props: {
+export default function IssueListSlot(props: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
 	return (

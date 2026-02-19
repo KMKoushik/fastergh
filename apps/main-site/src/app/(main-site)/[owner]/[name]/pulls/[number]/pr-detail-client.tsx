@@ -17,7 +17,7 @@ import { useOnDemandSync } from "@packages/ui/rpc/on-demand-sync";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { PatchDiff } from "@pierre/diffs/react";
 import { use, useId, useMemo, useState } from "react";
-import { Streamdown } from "streamdown";
+import { MarkdownBody } from "@/components/markdown-body";
 
 // ---------------------------------------------------------------------------
 // Types — inferred from the server RPC return types
@@ -165,7 +165,7 @@ export function PullRequestDetailClient({
 				<Card className="mt-4 sm:mt-6">
 					<CardContent className="px-3 pt-4 sm:px-6 sm:pt-6">
 						<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto">
-							<Streamdown>{pr.body}</Streamdown>
+							<MarkdownBody>{pr.body}</MarkdownBody>
 						</div>
 					</CardContent>
 				</Card>
@@ -304,7 +304,7 @@ export function PullRequestDetailClient({
 								</CardHeader>
 								<CardContent className="px-3 sm:px-6">
 									<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto">
-										<Streamdown>{comment.body}</Streamdown>
+										<MarkdownBody>{comment.body}</MarkdownBody>
 									</div>
 								</CardContent>
 							</Card>

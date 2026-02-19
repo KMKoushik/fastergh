@@ -22,7 +22,6 @@
 		"clean": "rm -rf node_modules .turbo",
 		"test": "vitest run --no-watch --pool=forks",
 		"test:watch": "vitest",
-
 		"convex:knip": "bun scripts/find-unused-convex-functions.ts",
 		"env:sync:prod": "bun run scripts/sync-env-prod.ts"
 	},
@@ -31,6 +30,7 @@
 		"@convex-dev/better-auth": "catalog:",
 		"@convex-dev/migrations": "^0.3.1",
 		"@convex-dev/rate-limiter": "^0.3.2",
+		"@convex-dev/workflow": "^0.3.4",
 		"@packages/confect": "workspace:*",
 		"@packages/observability": "workspace:*",
 		"better-auth": "catalog:",

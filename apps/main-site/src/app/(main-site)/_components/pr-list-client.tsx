@@ -7,6 +7,7 @@ import { Link } from "@packages/ui/components/link";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import {
+	ArrowLeft,
 	GitPullRequest,
 	MessageCircle,
 	Play,
@@ -63,9 +64,16 @@ export function PrListClient({
 	})();
 
 	return (
-		<div className="flex h-full flex-col">
-			<div className="shrink-0 border-b">
-				<div className="flex items-center justify-between px-3 pt-2 pb-0">
+		<div className="flex h-full flex-col bg-sidebar">
+			<div className="shrink-0 border-b border-sidebar-border">
+				<div className="flex items-center gap-2 px-3 pt-2 pb-0">
+					<Link
+						href="/"
+						className="text-muted-foreground/60 hover:text-foreground transition-colors no-underline"
+						aria-label="Back to repositories"
+					>
+						<ArrowLeft className="size-3.5" />
+					</Link>
 					<span className="text-xs font-bold text-foreground truncate tracking-tight">
 						{owner}
 						<span className="text-muted-foreground/40 mx-0.5">/</span>

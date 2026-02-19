@@ -50,7 +50,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { Streamdown } from "streamdown";
+import { MarkdownBody } from "@/components/markdown-body";
 
 // ==========================================================================
 // Types
@@ -932,7 +932,7 @@ function PrDetailContent({
 				<Card className="mt-4">
 					<CardContent className="px-3 pt-3">
 						<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-sm">
-							<Streamdown>{pr.body}</Streamdown>
+							<MarkdownBody>{pr.body}</MarkdownBody>
 						</div>
 					</CardContent>
 				</Card>
@@ -1062,7 +1062,7 @@ function PrDetailContent({
 								</CardHeader>
 								<CardContent className="px-3 pb-3">
 									<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs">
-										<Streamdown>{comment.body}</Streamdown>
+										<MarkdownBody>{comment.body}</MarkdownBody>
 									</div>
 								</CardContent>
 							</Card>
@@ -1278,7 +1278,7 @@ function IssueDetailContent({
 				<Card className="mt-4">
 					<CardContent className="px-3 pt-3">
 						<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-sm">
-							<Streamdown>{issue.body}</Streamdown>
+							<MarkdownBody>{issue.body}</MarkdownBody>
 						</div>
 					</CardContent>
 				</Card>
@@ -1327,7 +1327,7 @@ function IssueDetailContent({
 								</CardHeader>
 								<CardContent className="px-3 pb-3">
 									<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs">
-										<Streamdown>{comment.body}</Streamdown>
+										<MarkdownBody>{comment.body}</MarkdownBody>
 									</div>
 								</CardContent>
 							</Card>

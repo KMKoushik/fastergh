@@ -1,30 +1,31 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { ActionsListClient } from "../../../../_components/actions-list-client";
 import { ListSkeleton } from "../../../../_components/skeletons";
-import { PrListClient } from "./pr-list-client";
 
-export default function PrListSlot(props: {
+export default function ActionsListSlot(props: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
 	return (
 		<Suspense fallback={<ListSkeleton />}>
-			<PrListContent paramsPromise={props.params} />
+			<ActionsListContent paramsPromise={props.params} />
 		</Suspense>
 	);
 }
 
-async function PrListContent({
+async function ActionsListContent({
 	paramsPromise,
 }: {
 	paramsPromise: Promise<{ owner: string; name: string }>;
 }) {
 	const { owner, name } = await paramsPromise;
 
-	const initialData = await serverQueries.listPullRequests.queryPromise({
+	const initialData = await serverQueries.listWorkflowRuns.queryPromise({
 		ownerLogin: owner,
 		name,
-		state: "open",
 	});
 
-	return <PrListClient owner={owner} name={name} initialData={initialData} />;
+	return (
+		<ActionsListClient owner={owner} name={name} initialData={initialData} />
+	);
 }

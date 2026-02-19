@@ -16,8 +16,9 @@ import { cn } from "@packages/ui/lib/utils";
 import { useGithubWrite } from "@packages/ui/rpc/github-write";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { PatchDiff } from "@pierre/diffs/react";
+import { ChevronDown } from "lucide-react";
 import { useId, useMemo, useState } from "react";
-import { Streamdown } from "streamdown";
+import { MarkdownBody } from "@/components/markdown-body";
 
 type PrDetail = {
 	readonly repositoryId: number;
@@ -35,6 +36,7 @@ type PrDetail = {
 	readonly mergeableState: string | null;
 	readonly githubUpdatedAt: number;
 	readonly checkRuns: readonly {
+		readonly githubCheckRunId: number;
 		readonly name: string;
 		readonly status: string;
 		readonly conclusion: string | null;
@@ -120,225 +122,44 @@ export function PrDetailClient({
 	}
 
 	return (
-		<div className="h-full overflow-y-auto">
-			<div className="p-4 max-w-4xl">
-				{/* Header */}
-				<div className="flex items-start gap-2.5">
-					<PrStateIconLarge state={pr.state} draft={pr.draft} />
-					<div className="min-w-0 flex-1">
-						<h1 className="text-base font-bold break-words leading-snug tracking-tight">
-							{pr.title}
-						</h1>
-						<div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-							<span className="tabular-nums">#{pr.number}</span>
-							<PrStateBadge
-								state={pr.state}
-								draft={pr.draft}
-								mergedAt={pr.mergedAt}
-							/>
-							{pr.authorLogin && (
-								<span className="flex items-center gap-1">
-									<Avatar className="size-4">
-										<AvatarImage src={pr.authorAvatarUrl ?? undefined} />
-										<AvatarFallback className="text-[8px]">
-											{pr.authorLogin[0]?.toUpperCase()}
-										</AvatarFallback>
-									</Avatar>
-									<span className="font-medium">{pr.authorLogin}</span>
-								</span>
-							)}
-						</div>
-						<div className="mt-1.5 text-xs text-muted-foreground">
-							<code className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-mono">
-								{pr.headRefName}
-							</code>
-							<span className="mx-1 text-muted-foreground/40">&rarr;</span>
-							<code className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-mono">
-								{pr.baseRefName}
-							</code>
-						</div>
-					</div>
-				</div>
-
-				{/* Metadata */}
-				<div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-					{pr.mergeableState && (
-						<MergeableStateBadge state={pr.mergeableState} />
-					)}
-					<Badge variant="outline" className="text-[10px] font-mono">
-						{pr.headSha.slice(0, 7)}
-					</Badge>
-					<span className="text-[11px] text-muted-foreground">
-						Updated {formatRelative(pr.githubUpdatedAt)}
-					</span>
-				</div>
-
-				{/* Body */}
-				{pr.body && (
-					<Card className="mt-3">
-						<CardContent>
-							<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-sm leading-relaxed">
-								<Streamdown>{pr.body}</Streamdown>
-							</div>
-						</CardContent>
-					</Card>
-				)}
-
-				{/* Action bar */}
-				<PrActionBar
-					ownerLogin={owner}
+		<div className="flex h-full">
+			{/* Main area: diff */}
+			<div className="flex-1 min-w-0 h-full overflow-y-auto">
+				<DiffPanel
+					pr={pr}
+					filesData={filesData}
+					owner={owner}
 					name={name}
-					number={prNumber}
-					repositoryId={pr.repositoryId}
-					state={pr.state}
-					draft={pr.draft}
-					mergedAt={pr.mergedAt}
-					mergeableState={pr.mergeableState}
+					prNumber={prNumber}
 				/>
+			</div>
 
-				{/* Check runs */}
-				{pr.checkRuns.length > 0 && (
-					<div className="mt-4">
-						<h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
-							Checks{" "}
-							<span className="font-normal">({pr.checkRuns.length})</span>
-						</h2>
-						<div className="divide-y rounded-md border">
-							{pr.checkRuns.map((check) => (
-								<div
-									key={check.name}
-									className="flex items-center justify-between gap-2 px-2.5 py-1.5"
-								>
-									<div className="flex items-center gap-2 min-w-0">
-										<CheckIcon
-											status={check.status}
-											conclusion={check.conclusion}
-										/>
-										<span className="text-xs truncate">{check.name}</span>
-									</div>
-									{check.conclusion && (
-										<Badge
-											variant={
-												check.conclusion === "success"
-													? "secondary"
-													: check.conclusion === "failure"
-														? "destructive"
-														: "outline"
-											}
-											className={cn(
-												"shrink-0 text-[10px]",
-												check.conclusion === "success" && "text-green-600",
-											)}
-										>
-											{check.conclusion}
-										</Badge>
-									)}
-								</div>
-							))}
-						</div>
-					</div>
-				)}
-
-				{/* Reviews */}
-				{pr.reviews.length > 0 && (
-					<div className="mt-4">
-						<h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
-							Reviews <span className="font-normal">({pr.reviews.length})</span>
-						</h2>
-						<div className="space-y-1">
-							{pr.reviews.map((review) => (
-								<div
-									key={review.githubReviewId}
-									className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
-								>
-									{review.authorLogin && (
-										<Avatar className="size-4">
-											<AvatarImage src={review.authorAvatarUrl ?? undefined} />
-											<AvatarFallback className="text-[8px]">
-												{review.authorLogin[0]?.toUpperCase()}
-											</AvatarFallback>
-										</Avatar>
-									)}
-									<span className="text-xs font-medium truncate">
-										{review.authorLogin ?? "Unknown"}
-									</span>
-									<ReviewStateBadge state={review.state} />
-									{review.submittedAt && (
-										<span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
-											{formatRelative(review.submittedAt)}
-										</span>
-									)}
-								</div>
-							))}
-						</div>
-					</div>
-				)}
-
-				{/* Comments */}
-				{pr.comments.length > 0 && (
-					<div className="mt-4">
-						<h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
-							Comments{" "}
-							<span className="font-normal">({pr.comments.length})</span>
-						</h2>
-						<div className="space-y-2">
-							{pr.comments.map((comment) => (
-								<Card key={comment.githubCommentId}>
-									<CardHeader className="pb-0">
-										<div className="flex items-center gap-1.5 text-xs">
-											{comment.authorLogin && (
-												<span className="flex items-center gap-1">
-													<Avatar className="size-4">
-														<AvatarImage
-															src={comment.authorAvatarUrl ?? undefined}
-														/>
-														<AvatarFallback className="text-[8px]">
-															{comment.authorLogin[0]?.toUpperCase()}
-														</AvatarFallback>
-													</Avatar>
-													<span className="font-semibold">
-														{comment.authorLogin}
-													</span>
-												</span>
-											)}
-											<span className="text-muted-foreground/60 tabular-nums">
-												{formatRelative(comment.createdAt)}
-											</span>
-										</div>
-									</CardHeader>
-									<CardContent>
-										<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed">
-											<Streamdown>{comment.body}</Streamdown>
-										</div>
-									</CardContent>
-								</Card>
-							))}
-						</div>
-					</div>
-				)}
-
-				{/* Files Changed */}
-				<PrFilesSection filesData={filesData} />
-
-				{/* Comment form */}
-				<Separator className="mt-5" />
-				<CommentForm
-					ownerLogin={owner}
-					name={name}
-					number={prNumber}
-					repositoryId={pr.repositoryId}
-				/>
+			{/* Right sidebar: description, metadata, reviews, comments */}
+			<div className="hidden lg:flex w-80 xl:w-96 shrink-0 border-l border-border/60 h-full flex-col overflow-y-auto bg-muted/20">
+				<InfoSidebar pr={pr} owner={owner} name={name} prNumber={prNumber} />
 			</div>
 		</div>
 	);
 }
 
-// --- Files section ---
+// ---------------------------------------------------------------------------
+// Left: Diff / Files Changed
+// ---------------------------------------------------------------------------
 
-function PrFilesSection({ filesData }: { filesData: FilesData }) {
+function DiffPanel({
+	pr,
+	filesData,
+	owner,
+	name,
+	prNumber,
+}: {
+	pr: PrDetail;
+	filesData: FilesData;
+	owner: string;
+	name: string;
+	prNumber: number;
+}) {
 	const files = filesData.files;
-	if (files.length === 0) return null;
-
 	const filePatchEntries = files
 		.filter((f) => f.patch !== null)
 		.map((file) => {
@@ -362,48 +183,328 @@ function PrFilesSection({ filesData }: { filesData: FilesData }) {
 	const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
 
 	return (
-		<div className="mt-5">
-			<h2 className="text-sm font-semibold mb-2">
-				Files Changed
-				<span className="ml-2 text-xs font-normal text-muted-foreground">
-					{files.length} file{files.length !== 1 ? "s" : ""}
-					{totalAdditions > 0 && (
-						<span className="text-green-600 ml-1">+{totalAdditions}</span>
-					)}
-					{totalDeletions > 0 && (
-						<span className="text-red-600 ml-1">-{totalDeletions}</span>
-					)}
-				</span>
-			</h2>
-			{filePatchEntries.length > 0 && (
-				<div className="space-y-2">
-					{filePatchEntries.map((entry) => (
-						<div key={entry.filename} className="min-w-0">
-							<div className="flex items-center gap-2 px-2 py-1 bg-muted/50 rounded-t-md border border-b-0 text-[10px]">
-								<FileStatusBadge status={entry.status} />
-								<span className="font-mono font-medium truncate min-w-0">
-									{entry.filename}
-								</span>
-								<span className="ml-auto flex gap-1.5 shrink-0">
-									<span className="text-green-600">+{entry.additions}</span>
-									<span className="text-red-600">-{entry.deletions}</span>
-								</span>
-							</div>
-							<div className="overflow-x-auto rounded-b-md border">
-								<PatchDiff
-									patch={entry.patch}
-									options={{ diffStyle: "unified" }}
-								/>
-							</div>
-						</div>
-					))}
+		<div className="p-4">
+			{/* Compact header */}
+			<div className="flex items-start gap-2.5 mb-3">
+				<PrStateIconLarge state={pr.state} draft={pr.draft} />
+				<div className="min-w-0 flex-1">
+					<h1 className="text-base font-bold break-words leading-snug tracking-tight">
+						{pr.title}
+					</h1>
+					<div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+						<span className="tabular-nums">#{pr.number}</span>
+						<PrStateBadge
+							state={pr.state}
+							draft={pr.draft}
+							mergedAt={pr.mergedAt}
+						/>
+						{pr.authorLogin && (
+							<span className="flex items-center gap-1">
+								<Avatar className="size-4">
+									<AvatarImage src={pr.authorAvatarUrl ?? undefined} />
+									<AvatarFallback className="text-[8px]">
+										{pr.authorLogin[0]?.toUpperCase()}
+									</AvatarFallback>
+								</Avatar>
+								<span className="font-medium">{pr.authorLogin}</span>
+							</span>
+						)}
+						<span className="text-muted-foreground/40">&middot;</span>
+						<span>{formatRelative(pr.githubUpdatedAt)}</span>
+					</div>
 				</div>
+			</div>
+
+			{/* Description visible on small screens (no right sidebar) */}
+			<div className="lg:hidden mb-4">
+				{pr.body && <CollapsibleDescription body={pr.body} />}
+			</div>
+
+			{/* Files summary + diffs */}
+			{files.length > 0 && (
+				<div>
+					<h2 className="text-sm font-semibold mb-2">
+						Files Changed
+						<span className="ml-2 text-xs font-normal text-muted-foreground">
+							{files.length} file{files.length !== 1 ? "s" : ""}
+							{totalAdditions > 0 && (
+								<span className="text-green-600 ml-1">+{totalAdditions}</span>
+							)}
+							{totalDeletions > 0 && (
+								<span className="text-red-600 ml-1">-{totalDeletions}</span>
+							)}
+						</span>
+					</h2>
+					{filePatchEntries.length > 0 && (
+						<div className="space-y-2">
+							{filePatchEntries.map((entry) => (
+								<div key={entry.filename} className="min-w-0">
+									<div className="flex items-center gap-2 px-2 py-1 bg-muted/50 rounded-t-md border border-b-0 text-[10px]">
+										<FileStatusBadge status={entry.status} />
+										<span className="font-mono font-medium truncate min-w-0">
+											{entry.filename}
+										</span>
+										<span className="ml-auto flex gap-1.5 shrink-0">
+											<span className="text-green-600">+{entry.additions}</span>
+											<span className="text-red-600">-{entry.deletions}</span>
+										</span>
+									</div>
+									<div className="overflow-x-auto rounded-b-md border">
+										<PatchDiff
+											patch={entry.patch}
+											options={{
+												diffStyle: "unified",
+												disableFileHeader: true,
+											}}
+										/>
+									</div>
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			)}
+
+			{files.length === 0 && (
+				<p className="py-8 text-center text-xs text-muted-foreground">
+					No file changes synced yet.
+				</p>
 			)}
 		</div>
 	);
 }
 
-// --- Inline helpers (keeping file self-contained) ---
+// ---------------------------------------------------------------------------
+// Right sidebar: description, actions, checks, reviews, comments
+// ---------------------------------------------------------------------------
+
+function InfoSidebar({
+	pr,
+	owner,
+	name,
+	prNumber,
+}: {
+	pr: PrDetail;
+	owner: string;
+	name: string;
+	prNumber: number;
+}) {
+	return (
+		<div className="p-3 space-y-4">
+			{/* Branch info */}
+			<div>
+				<h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1">
+					Branches
+				</h3>
+				<div className="text-xs text-muted-foreground">
+					<code className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-mono">
+						{pr.headRefName}
+					</code>
+					<span className="mx-1 text-muted-foreground/40">&rarr;</span>
+					<code className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-mono">
+						{pr.baseRefName}
+					</code>
+				</div>
+			</div>
+
+			{/* Metadata */}
+			<div className="flex flex-wrap items-center gap-1.5">
+				{pr.mergeableState && <MergeableStateBadge state={pr.mergeableState} />}
+				<Badge variant="outline" className="text-[10px] font-mono">
+					{pr.headSha.slice(0, 7)}
+				</Badge>
+			</div>
+
+			{/* Action bar */}
+			<PrActionBar
+				ownerLogin={owner}
+				name={name}
+				number={prNumber}
+				repositoryId={pr.repositoryId}
+				state={pr.state}
+				draft={pr.draft}
+				mergedAt={pr.mergedAt}
+				mergeableState={pr.mergeableState}
+			/>
+
+			{/* Body / Description */}
+			{pr.body && <CollapsibleDescription body={pr.body} />}
+
+			{/* Check runs */}
+			{pr.checkRuns.length > 0 && (
+				<div>
+					<h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+						Checks <span className="font-normal">({pr.checkRuns.length})</span>
+					</h3>
+					<div className="divide-y rounded-md border">
+						{pr.checkRuns.map((check) => (
+							<div
+								key={check.name}
+								className="flex items-center justify-between gap-2 px-2.5 py-1.5"
+							>
+								<div className="flex items-center gap-2 min-w-0">
+									<CheckIcon
+										status={check.status}
+										conclusion={check.conclusion}
+									/>
+									<span className="text-xs truncate">{check.name}</span>
+								</div>
+								{check.conclusion && (
+									<Badge
+										variant={
+											check.conclusion === "success"
+												? "secondary"
+												: check.conclusion === "failure"
+													? "destructive"
+													: "outline"
+										}
+										className={cn(
+											"shrink-0 text-[10px]",
+											check.conclusion === "success" && "text-green-600",
+										)}
+									>
+										{check.conclusion}
+									</Badge>
+								)}
+							</div>
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* Reviews */}
+			{pr.reviews.length > 0 && (
+				<div>
+					<h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+						Reviews <span className="font-normal">({pr.reviews.length})</span>
+					</h3>
+					<div className="space-y-1">
+						{pr.reviews.map((review) => (
+							<div
+								key={review.githubReviewId}
+								className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
+							>
+								{review.authorLogin && (
+									<Avatar className="size-4">
+										<AvatarImage src={review.authorAvatarUrl ?? undefined} />
+										<AvatarFallback className="text-[8px]">
+											{review.authorLogin[0]?.toUpperCase()}
+										</AvatarFallback>
+									</Avatar>
+								)}
+								<span className="text-xs font-medium truncate">
+									{review.authorLogin ?? "Unknown"}
+								</span>
+								<ReviewStateBadge state={review.state} />
+								{review.submittedAt && (
+									<span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+										{formatRelative(review.submittedAt)}
+									</span>
+								)}
+							</div>
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* Comments */}
+			{pr.comments.length > 0 && (
+				<div>
+					<h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+						Comments <span className="font-normal">({pr.comments.length})</span>
+					</h3>
+					<div className="space-y-2">
+						{pr.comments.map((comment) => (
+							<Card key={comment.githubCommentId}>
+								<CardHeader className="pb-0">
+									<div className="flex items-center gap-1.5 text-xs">
+										{comment.authorLogin && (
+											<span className="flex items-center gap-1">
+												<Avatar className="size-4">
+													<AvatarImage
+														src={comment.authorAvatarUrl ?? undefined}
+													/>
+													<AvatarFallback className="text-[8px]">
+														{comment.authorLogin[0]?.toUpperCase()}
+													</AvatarFallback>
+												</Avatar>
+												<span className="font-semibold">
+													{comment.authorLogin}
+												</span>
+											</span>
+										)}
+										<span className="text-muted-foreground/60 tabular-nums">
+											{formatRelative(comment.createdAt)}
+										</span>
+									</div>
+								</CardHeader>
+								<CardContent>
+									<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed">
+										<MarkdownBody>{comment.body}</MarkdownBody>
+									</div>
+								</CardContent>
+							</Card>
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* Comment form */}
+			<Separator />
+			<CommentForm
+				ownerLogin={owner}
+				name={name}
+				number={prNumber}
+				repositoryId={pr.repositoryId}
+			/>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible description — shows a preview with expand toggle
+// ---------------------------------------------------------------------------
+
+function CollapsibleDescription({ body }: { body: string }) {
+	const [expanded, setExpanded] = useState(false);
+
+	return (
+		<div>
+			<h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+				Description
+			</h3>
+			<Card className="relative overflow-hidden">
+				<CardContent>
+					<div
+						className={cn(
+							"prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed",
+							!expanded && "max-h-24 overflow-hidden",
+						)}
+					>
+						<MarkdownBody>{body}</MarkdownBody>
+					</div>
+				</CardContent>
+				{/* ───▼─── border toggle */}
+				<button
+					type="button"
+					onClick={() => setExpanded((prev) => !prev)}
+					className="relative flex w-full items-center justify-center border-t border-border/60 py-1 hover:bg-muted/50 transition-colors cursor-pointer"
+				>
+					<ChevronDown
+						className={cn(
+							"size-3.5 text-muted-foreground transition-transform duration-200",
+							expanded && "rotate-180",
+						)}
+					/>
+				</button>
+			</Card>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Action bar
+// ---------------------------------------------------------------------------
 
 function PrActionBar({
 	ownerLogin,
@@ -440,7 +541,7 @@ function PrActionBar({
 		(mergeableState === "clean" || mergeableState === "unstable");
 
 	return (
-		<div className="mt-3 flex flex-wrap items-center gap-2">
+		<div className="flex flex-wrap items-center gap-2">
 			{state === "open" && (
 				<Button
 					size="sm"
@@ -512,6 +613,10 @@ function PrActionBar({
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Comment form
+// ---------------------------------------------------------------------------
+
 function CommentForm({
 	ownerLogin,
 	name,
@@ -532,15 +637,17 @@ function CommentForm({
 	const isSubmitting = Result.isWaiting(commentResult);
 
 	return (
-		<div className="mt-4">
-			<h3 className="text-xs font-semibold mb-1.5">Add a comment</h3>
+		<div>
+			<h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+				Add a comment
+			</h3>
 			<Textarea
 				placeholder="Leave a comment..."
 				value={body}
 				onChange={(e) => setBody(e.target.value)}
 				rows={3}
 				disabled={isSubmitting}
-				className="mb-2 text-sm"
+				className="mb-2 text-xs"
 			/>
 			<div className="flex items-center justify-between">
 				<div>
@@ -554,6 +661,7 @@ function CommentForm({
 				<Button
 					size="sm"
 					disabled={body.trim().length === 0 || isSubmitting}
+					className="h-7 text-xs"
 					onClick={() => {
 						submitComment({
 							correlationId: `${correlationPrefix}-comment-${Date.now()}`,
@@ -573,7 +681,9 @@ function CommentForm({
 	);
 }
 
-// --- Icons/badges ---
+// ---------------------------------------------------------------------------
+// Icons & badges
+// ---------------------------------------------------------------------------
 
 function PrStateIconLarge({
 	state,

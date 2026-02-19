@@ -169,14 +169,12 @@ connectRepoDef.implement((args) =>
 
 			syncJobId = String(jobId);
 
-			// Schedule the bootstrap action to run immediately
-			yield* Effect.promise(() =>
-				ctx.scheduler.runAfter(0, internal.rpc.repoBootstrap.bootstrapRepo, {
-					githubRepoId: args.githubRepoId,
-					fullName: args.fullName,
-					lockKey,
-				}),
-			);
+			// Start durable bootstrap workflow
+			yield* ctx.runMutation(internal.rpc.bootstrapWorkflow.startBootstrap, {
+				repositoryId: args.githubRepoId,
+				fullName: args.fullName,
+				lockKey,
+			});
 			bootstrapScheduled = true;
 		} else {
 			syncJobId = String(existingJob.value._id);

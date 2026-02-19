@@ -276,14 +276,12 @@ reconcileRepoDef.implement((args) =>
 			updatedAt: now,
 		});
 
-		// Schedule the bootstrap action to re-fetch everything (it's already idempotent)
-		yield* Effect.promise(() =>
-			ctx.scheduler.runAfter(0, internal.rpc.repoBootstrap.bootstrapRepo, {
-				githubRepoId: repoDoc.githubRepoId,
-				fullName: repoDoc.fullName,
-				lockKey,
-			}),
-		);
+		// Start durable bootstrap workflow to re-fetch everything (idempotent upserts)
+		yield* ctx.runMutation(internal.rpc.bootstrapWorkflow.startBootstrap, {
+			repositoryId: repoDoc.githubRepoId,
+			fullName: repoDoc.fullName,
+			lockKey,
+		});
 
 		return { scheduled: true, lockKey };
 	}),

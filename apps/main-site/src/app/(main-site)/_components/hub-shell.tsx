@@ -11,32 +11,33 @@ import { usePathname } from "next/navigation";
 import { type ReactNode, Suspense } from "react";
 
 /**
- * Three-panel resizable shell that positions parallel route slots.
- * Desktop always shows all three panels side-by-side.
+ * Two-panel resizable shell that positions parallel route slots.
+ * Desktop always shows both panels side-by-side.
  * Mobile shows one panel at a time based on URL depth.
+ *
+ * The left panel shows either the repo sidebar (at /) or the list view
+ * (at /owner/name/pulls|issues|actions) — swapped by Next.js parallel routes.
  *
  * The dynamic `usePathname()` call is isolated inside `<MobileView>` and
  * wrapped in `<Suspense>` so the rest of the shell can be prerendered.
  */
 export function HubShell({
 	sidebar,
-	list,
 	detail,
 }: {
 	sidebar: ReactNode;
-	list: ReactNode;
 	detail: ReactNode;
 }) {
 	return (
 		<div className="h-dvh w-full bg-background">
-			{/* Desktop: three-panel resizable */}
+			{/* Desktop: two-panel resizable */}
 			<div className="hidden md:block h-full">
 				<ResizablePanelGroup direction="horizontal" className="h-full">
-					{/* Panel 1: Repos */}
+					{/* Panel 1: Sidebar (repos or list) */}
 					<ResizablePanel
-						defaultSize={17}
-						minSize={14}
-						maxSize={28}
+						defaultSize={25}
+						minSize={16}
+						maxSize={40}
 						className="border-r border-border/60"
 					>
 						{sidebar}
@@ -44,20 +45,8 @@ export function HubShell({
 
 					<ResizableHandle />
 
-					{/* Panel 2: List (PRs/Issues/Actions) */}
-					<ResizablePanel
-						defaultSize={27}
-						minSize={20}
-						maxSize={42}
-						className="border-r border-border/60"
-					>
-						{list}
-					</ResizablePanel>
-
-					<ResizableHandle />
-
-					{/* Panel 3: Detail/Content */}
-					<ResizablePanel defaultSize={56} minSize={30} className="min-w-0">
+					{/* Panel 2: Detail/Content */}
+					<ResizablePanel defaultSize={75} minSize={40} className="min-w-0">
 						{detail}
 					</ResizablePanel>
 				</ResizablePanelGroup>
@@ -66,7 +55,7 @@ export function HubShell({
 			{/* Mobile: stacked view — usePathname is isolated here */}
 			<div className="md:hidden h-full">
 				<Suspense>
-					<MobileView sidebar={sidebar} list={list} detail={detail} />
+					<MobileView sidebar={sidebar} detail={detail} />
 				</Suspense>
 			</div>
 		</div>
@@ -79,11 +68,9 @@ export function HubShell({
  */
 function MobileView({
 	sidebar,
-	list,
 	detail,
 }: {
 	sidebar: ReactNode;
-	list: ReactNode;
 	detail: ReactNode;
 }) {
 	const pathname = usePathname();
@@ -100,6 +87,7 @@ function MobileView({
 				: "pulls";
 	const hasDetail = segments.length >= 4;
 
+	// Detail view: show detail with back-to-list link
 	if (owner && name && hasDetail) {
 		return (
 			<div className="flex h-full flex-col">
@@ -117,25 +105,6 @@ function MobileView({
 		);
 	}
 
-	if (owner && name) {
-		return (
-			<div className="flex h-full flex-col">
-				<div className="shrink-0 flex items-center gap-2 border-b px-3 py-2">
-					<Link
-						href="/"
-						className="text-[11px] text-muted-foreground hover:text-foreground no-underline flex items-center gap-1 font-medium"
-					>
-						<ArrowLeft className="size-3" />
-						Repos
-					</Link>
-					<span className="text-[11px] font-semibold truncate">
-						{owner}/{name}
-					</span>
-				</div>
-				{list}
-			</div>
-		);
-	}
-
+	// Repo selected or root: show the sidebar (which contains repo list OR item list)
 	return sidebar;
 }

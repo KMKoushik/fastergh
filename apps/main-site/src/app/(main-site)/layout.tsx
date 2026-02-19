@@ -11,17 +11,15 @@ export const metadata: Metadata = {
 export default function MainSiteLayout({
 	children,
 	sidebar,
-	list,
 	detail,
 }: {
 	children: React.ReactNode;
 	sidebar: React.ReactNode;
-	list: React.ReactNode;
 	detail: React.ReactNode;
 }) {
 	return (
 		<Providers>
-			<HubShell sidebar={sidebar} list={list} detail={detail} />
+			<HubShell sidebar={sidebar} detail={detail} />
 			{/* children slot for route pages that handle redirects etc */}
 			<div className="hidden">
 				<Suspense>{children}</Suspense>

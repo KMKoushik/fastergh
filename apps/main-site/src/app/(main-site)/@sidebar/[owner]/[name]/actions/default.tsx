@@ -1,12 +1,10 @@
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
+import { ActionsListClient } from "../../../../_components/actions-list-client";
 import { ListSkeleton } from "../../../../_components/skeletons";
-import { ActionsListClient } from "./actions-list-client";
 
 /**
- * Fallback for the @list slot when navigating directly to /actions/[runNumber].
- * On soft navigation (clicking a list item), Next.js keeps the existing
- * rendered page.tsx — this default.tsx is only used for hard navigation.
+ * Fallback for the @sidebar slot when navigating directly to /actions/[runNumber].
  */
 export default function ActionsListDefault(props: {
 	params: Promise<{ owner: string; name: string }>;

@@ -538,7 +538,11 @@ type GHClient = {
 		fn: (
 			fetch: (path: string, init?: RequestInit) => Promise<Response>,
 		) => Promise<A>,
-	) => Effect.Effect<A, import("../shared/githubApi").GitHubApiError>;
+	) => Effect.Effect<
+		A,
+		| import("../shared/githubApi").GitHubApiError
+		| import("../shared/githubApi").GitHubRateLimitError
+	>;
 };
 
 const executeCreateIssue = (
@@ -591,15 +595,24 @@ const executeCreateIssue = (
 			errorMessage: null,
 		};
 	}).pipe(
-		Effect.catchTag("GitHubApiError", (e) =>
-			Effect.succeed({
-				success: false,
-				resultData: null,
-				entityNumber: null,
-				errorStatus: e.status,
-				errorMessage: e.message,
-			} satisfies ExecutionResult),
-		),
+		Effect.catchTags({
+			GitHubApiError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+			GitHubRateLimitError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+		}),
 	);
 
 const executeCreateComment = (
@@ -650,15 +663,24 @@ const executeCreateComment = (
 			errorMessage: null,
 		};
 	}).pipe(
-		Effect.catchTag("GitHubApiError", (e) =>
-			Effect.succeed({
-				success: false,
-				resultData: null,
-				entityNumber: null,
-				errorStatus: e.status,
-				errorMessage: e.message,
-			} satisfies ExecutionResult),
-		),
+		Effect.catchTags({
+			GitHubApiError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+			GitHubRateLimitError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+		}),
 	);
 
 const executeUpdateIssueState = (
@@ -710,15 +732,24 @@ const executeUpdateIssueState = (
 			errorMessage: null,
 		};
 	}).pipe(
-		Effect.catchTag("GitHubApiError", (e) =>
-			Effect.succeed({
-				success: false,
-				resultData: null,
-				entityNumber: null,
-				errorStatus: e.status,
-				errorMessage: e.message,
-			} satisfies ExecutionResult),
-		),
+		Effect.catchTags({
+			GitHubApiError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+			GitHubRateLimitError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+		}),
 	);
 
 const executeMergePullRequest = (
@@ -778,15 +809,24 @@ const executeMergePullRequest = (
 			errorMessage: null,
 		};
 	}).pipe(
-		Effect.catchTag("GitHubApiError", (e) =>
-			Effect.succeed({
-				success: false,
-				resultData: null,
-				entityNumber: null,
-				errorStatus: e.status,
-				errorMessage: e.message,
-			} satisfies ExecutionResult),
-		),
+		Effect.catchTags({
+			GitHubApiError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+			GitHubRateLimitError: (e) =>
+				Effect.succeed({
+					success: false,
+					resultData: null,
+					entityNumber: null,
+					errorStatus: e.status,
+					errorMessage: e.message,
+				} satisfies ExecutionResult),
+		}),
 	);
 
 // ---------------------------------------------------------------------------
