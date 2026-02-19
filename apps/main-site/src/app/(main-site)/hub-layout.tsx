@@ -1,6 +1,12 @@
 "use client";
 
-import { Result, useAtom, useAtomValue } from "@effect-atom/atom-react";
+import type { Atom } from "@effect-atom/atom";
+import {
+	RegistryContext,
+	Result,
+	useAtom,
+	useAtomValue,
+} from "@effect-atom/atom-react";
 import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import {
 	Avatar,
@@ -33,10 +39,18 @@ import {
 	GitMerge,
 	GitPullRequest,
 	MessageCircle,
+	Play,
 	TriangleAlert,
 } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useId, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useContext,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { Streamdown } from "streamdown";
 
 // ==========================================================================
@@ -154,7 +168,7 @@ type FilesData = {
 	}[];
 };
 
-type Tab = "pulls" | "issues";
+type Tab = "pulls" | "issues" | "actions";
 
 // ==========================================================================
 // Helpers
@@ -193,7 +207,12 @@ function useRouteState(): {
 		const owner = segments[0] ?? null;
 		const name = segments[1] ?? null;
 		const tabSegment = segments[2];
-		const tab: Tab = tabSegment === "issues" ? "issues" : "pulls";
+		const tab: Tab =
+			tabSegment === "issues"
+				? "issues"
+				: tabSegment === "actions"
+					? "actions"
+					: "pulls";
 		const numberStr = segments[3];
 		const itemNumber = numberStr ? Number.parseInt(numberStr, 10) : null;
 		return {
@@ -370,7 +389,7 @@ function ListPanel({
 						)}
 					>
 						<GitPullRequest className="size-3.5" />
-						Pull Requests
+						PRs
 					</Link>
 					<Link
 						href={`/${owner}/${name}/issues`}
@@ -384,6 +403,18 @@ function ListPanel({
 						<TriangleAlert className="size-3.5" />
 						Issues
 					</Link>
+					<Link
+						href={`/${owner}/${name}/actions`}
+						className={cn(
+							"flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors no-underline",
+							tab === "actions"
+								? "border-foreground text-foreground"
+								: "border-transparent text-muted-foreground hover:text-foreground",
+						)}
+					>
+						<Play className="size-3.5" />
+						Actions
+					</Link>
 				</div>
 			</div>
 
@@ -395,11 +426,17 @@ function ListPanel({
 						name={name}
 						activeNumber={activeItemNumber}
 					/>
-				) : (
+				) : tab === "issues" ? (
 					<IssueListPanel
 						owner={owner}
 						name={name}
 						activeNumber={activeItemNumber}
+					/>
+				) : (
+					<ActionsListPanel
+						owner={owner}
+						name={name}
+						activeRunNumber={activeItemNumber}
 					/>
 				)}
 			</ScrollArea>
@@ -613,6 +650,93 @@ function IssueListPanel({
 	);
 }
 
+// --- Actions List ---
+
+function ActionsListPanel({
+	owner,
+	name,
+	activeRunNumber,
+}: {
+	owner: string;
+	name: string;
+	activeRunNumber: number | null;
+}) {
+	const client = useProjectionQueries();
+	const runsAtom = useMemo(
+		() =>
+			client.listWorkflowRuns.subscription({
+				ownerLogin: owner,
+				name,
+			}),
+		[client, owner, name],
+	);
+	const runsResult = useAtomValue(runsAtom);
+
+	const runs = (() => {
+		const v = Result.value(runsResult);
+		if (Option.isSome(v)) return v.value;
+		return null;
+	})();
+
+	return (
+		<div className="p-2">
+			{runs === null && (
+				<div className="space-y-2">
+					{[1, 2, 3, 4, 5].map((i) => (
+						<Skeleton key={i} className="h-12 w-full rounded-md" />
+					))}
+				</div>
+			)}
+
+			{runs !== null && runs.length === 0 && (
+				<p className="px-2 py-6 text-xs text-muted-foreground text-center">
+					No workflow runs found.
+				</p>
+			)}
+
+			{runs !== null &&
+				runs.map((run) => (
+					<Link
+						key={run.githubRunId}
+						href={`/${owner}/${name}/actions/${run.runNumber}`}
+						className={cn(
+							"flex items-start gap-2 rounded-md px-2.5 py-2 text-sm transition-colors no-underline",
+							activeRunNumber === run.runNumber
+								? "bg-accent text-accent-foreground"
+								: "hover:bg-muted",
+						)}
+					>
+						<WorkflowConclusionDot
+							status={run.status}
+							conclusion={run.conclusion}
+						/>
+						<div className="min-w-0 flex-1">
+							<div className="flex items-center gap-1.5">
+								<span className="font-medium text-xs truncate">
+									{run.workflowName ?? "Workflow"}
+								</span>
+							</div>
+							<div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
+								<span>#{run.runNumber}</span>
+								{run.actorLogin && <span>{run.actorLogin}</span>}
+								<span>{formatRelative(run.createdAt)}</span>
+								{run.jobCount > 0 && (
+									<span>
+										{run.jobCount} job{run.jobCount !== 1 ? "s" : ""}
+									</span>
+								)}
+							</div>
+						</div>
+						<WorkflowConclusionBadgeSmall
+							status={run.status}
+							conclusion={run.conclusion}
+						/>
+					</Link>
+				))}
+		</div>
+	);
+}
+
 // ==========================================================================
 // PANEL 3: Content/Detail Panel
 // ==========================================================================
@@ -633,11 +757,17 @@ function DetailPanel({
 			<div className="p-4">
 				{tab === "pulls" ? (
 					<PrDetailContent owner={owner} name={name} prNumber={itemNumber} />
-				) : (
+				) : tab === "issues" ? (
 					<IssueDetailContent
 						owner={owner}
 						name={name}
 						issueNumber={itemNumber}
+					/>
+				) : (
+					<WorkflowRunDetailContent
+						owner={owner}
+						name={name}
+						runNumber={itemNumber}
 					/>
 				)}
 			</div>
@@ -1163,6 +1293,269 @@ function IssueDetailContent({
 			/>
 		</>
 	);
+}
+
+// --- Workflow Run Detail ---
+
+type WorkflowJob = {
+	readonly githubJobId: number;
+	readonly name: string;
+	readonly status: string;
+	readonly conclusion: string | null;
+	readonly startedAt: number | null;
+	readonly completedAt: number | null;
+	readonly runnerName: string | null;
+	readonly stepsJson: string | null;
+};
+
+type WorkflowRunDetail = {
+	readonly repositoryId: number;
+	readonly githubRunId: number;
+	readonly workflowName: string | null;
+	readonly runNumber: number;
+	readonly runAttempt: number;
+	readonly event: string;
+	readonly status: string | null;
+	readonly conclusion: string | null;
+	readonly headBranch: string | null;
+	readonly headSha: string;
+	readonly actorLogin: string | null;
+	readonly actorAvatarUrl: string | null;
+	readonly htmlUrl: string | null;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+	readonly jobs: readonly WorkflowJob[];
+} | null;
+
+function WorkflowRunDetailContent({
+	owner,
+	name,
+	runNumber,
+}: {
+	owner: string;
+	name: string;
+	runNumber: number;
+}) {
+	const client = useProjectionQueries();
+	const detailAtom = useMemo(
+		() =>
+			client.getWorkflowRunDetail.subscription({
+				ownerLogin: owner,
+				name,
+				runNumber,
+			}),
+		[client, owner, name, runNumber],
+	);
+	const detailResult = useAtomValue(detailAtom);
+
+	const run = (() => {
+		const v = Result.value(detailResult);
+		if (Option.isSome(v)) return v.value;
+		return null;
+	})();
+
+	if (Result.isInitial(detailResult)) {
+		return <DetailSkeleton />;
+	}
+
+	if (run === null) {
+		return (
+			<div className="py-8 text-center">
+				<h2 className="text-base font-semibold">Run #{runNumber}</h2>
+				<p className="mt-1 text-xs text-muted-foreground">
+					Workflow run not found.
+				</p>
+			</div>
+		);
+	}
+
+	return (
+		<>
+			{/* Header */}
+			<div className="flex items-start gap-2">
+				<WorkflowConclusionIconLarge
+					status={run.status}
+					conclusion={run.conclusion}
+				/>
+				<div className="min-w-0 flex-1">
+					<h1 className="text-lg font-bold break-words leading-tight">
+						{run.workflowName ?? "Workflow"}{" "}
+						<span className="text-muted-foreground font-normal">
+							#{run.runNumber}
+						</span>
+					</h1>
+					<div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+						<WorkflowConclusionBadge
+							status={run.status}
+							conclusion={run.conclusion}
+						/>
+						<Badge variant="outline" className="text-[10px]">
+							{run.event}
+						</Badge>
+						{run.headBranch && (
+							<code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">
+								{run.headBranch}
+							</code>
+						)}
+						<Badge variant="outline" className="text-[10px] font-mono">
+							{run.headSha.slice(0, 7)}
+						</Badge>
+						{run.runAttempt > 1 && <span>Attempt #{run.runAttempt}</span>}
+					</div>
+					<div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+						{run.actorLogin && (
+							<span className="flex items-center gap-1">
+								<Avatar className="size-4">
+									<AvatarImage src={run.actorAvatarUrl ?? undefined} />
+									<AvatarFallback className="text-[8px]">
+										{run.actorLogin[0]?.toUpperCase()}
+									</AvatarFallback>
+								</Avatar>
+								{run.actorLogin}
+							</span>
+						)}
+						<span>{formatRelative(run.createdAt)}</span>
+						{run.htmlUrl && (
+							<Link
+								href={run.htmlUrl}
+								className="text-xs underline hover:text-foreground"
+								target="_blank"
+								rel="noopener noreferrer"
+							>
+								GitHub
+							</Link>
+						)}
+					</div>
+				</div>
+			</div>
+
+			{/* Jobs */}
+			{run.jobs.length > 0 && (
+				<div className="mt-5">
+					<h2 className="text-sm font-semibold mb-2">
+						Jobs ({run.jobs.length})
+					</h2>
+					<div className="divide-y rounded-md border">
+						{run.jobs.map((job) => {
+							const steps = parseStepsJson(job.stepsJson);
+							const duration = formatJobDuration(
+								job.startedAt,
+								job.completedAt,
+							);
+							return (
+								<div key={job.githubJobId} className="px-3 py-2">
+									<div className="flex items-center justify-between gap-2">
+										<div className="flex items-center gap-2 min-w-0">
+											<WorkflowConclusionDot
+												status={job.status}
+												conclusion={job.conclusion}
+											/>
+											<span className="text-xs font-medium truncate">
+												{job.name}
+											</span>
+											<WorkflowConclusionBadgeSmall
+												status={job.status}
+												conclusion={job.conclusion}
+											/>
+										</div>
+										{duration && (
+											<span className="text-[10px] text-muted-foreground shrink-0">
+												{duration}
+											</span>
+										)}
+									</div>
+									{job.runnerName && (
+										<p className="text-[10px] text-muted-foreground mt-0.5 ml-5">
+											Runner: {job.runnerName}
+										</p>
+									)}
+									{steps.length > 0 && (
+										<div className="mt-1.5 ml-5 space-y-0.5">
+											{steps.map((step, i) => (
+												<div
+													key={`${step.name}-${i}`}
+													className="flex items-center gap-1.5 text-[11px]"
+												>
+													<StepDot conclusion={step.conclusion} />
+													<span className="truncate text-muted-foreground">
+														{step.name}
+													</span>
+													{step.conclusion && step.conclusion !== "success" && (
+														<Badge
+															variant="outline"
+															className="text-[9px] ml-auto"
+														>
+															{step.conclusion}
+														</Badge>
+													)}
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			)}
+
+			{run.jobs.length === 0 && (
+				<p className="mt-4 text-xs text-muted-foreground">
+					No jobs found for this workflow run.
+				</p>
+			)}
+		</>
+	);
+}
+
+// --- Workflow step parsing ---
+
+type WorkflowStep = {
+	name: string;
+	status: string;
+	conclusion: string | null;
+	number: number;
+};
+
+function parseStepsJson(stepsJson: string | null): readonly WorkflowStep[] {
+	if (!stepsJson) return [];
+	try {
+		const parsed: unknown = JSON.parse(stepsJson);
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.map((s: unknown) => {
+				if (typeof s !== "object" || s === null) return null;
+				const step = s as Record<string, unknown>;
+				const stepName =
+					typeof step.name === "string" ? step.name : "Unknown step";
+				const status =
+					typeof step.status === "string" ? step.status : "unknown";
+				const conclusion =
+					typeof step.conclusion === "string" ? step.conclusion : null;
+				const number = typeof step.number === "number" ? step.number : 0;
+				return { name: stepName, status, conclusion, number };
+			})
+			.filter((s): s is WorkflowStep => s !== null);
+	} catch {
+		return [];
+	}
+}
+
+function formatJobDuration(
+	startedAt: number | null,
+	completedAt: number | null,
+): string | null {
+	if (startedAt === null || completedAt === null) return null;
+	const durationMs = completedAt - startedAt;
+	if (durationMs < 1000) return "<1s";
+	const seconds = Math.floor(durationMs / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+	const hours = Math.floor(minutes / 60);
+	const remainingMinutes = minutes % 60;
+	return `${hours}h ${remainingMinutes}m`;
 }
 
 // ==========================================================================
@@ -1786,6 +2179,173 @@ function FileStatusBadge({
 	);
 }
 
+// --- Workflow conclusion icons/badges ---
+
+function WorkflowConclusionDot({
+	status,
+	conclusion,
+}: {
+	status: string | null;
+	conclusion: string | null;
+}) {
+	if (status === "in_progress" || status === "queued")
+		return (
+			<div className="mt-0.5 size-2.5 rounded-full border-2 border-yellow-500 border-t-transparent animate-spin shrink-0" />
+		);
+	if (conclusion === "success")
+		return (
+			<div className="mt-0.5 size-2.5 rounded-full bg-green-500 shrink-0" />
+		);
+	if (conclusion === "failure")
+		return <div className="mt-0.5 size-2.5 rounded-full bg-red-500 shrink-0" />;
+	return (
+		<div className="mt-0.5 size-2.5 rounded-full bg-muted-foreground shrink-0" />
+	);
+}
+
+function WorkflowConclusionIconLarge({
+	status,
+	conclusion,
+}: {
+	status: string | null;
+	conclusion: string | null;
+}) {
+	if (status === "in_progress" || status === "queued")
+		return (
+			<div className="mt-1 size-5 rounded-full border-2 border-yellow-500 border-t-transparent animate-spin shrink-0" />
+		);
+	if (conclusion === "success")
+		return (
+			<svg
+				className="mt-1 size-5 text-green-600 shrink-0"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16Zm3.78-9.72a.75.75 0 0 0-1.06-1.06L6.75 9.19 5.28 7.72a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l4.5-4.5Z" />
+			</svg>
+		);
+	if (conclusion === "failure")
+		return (
+			<svg
+				className="mt-1 size-5 text-red-600 shrink-0"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M2.343 13.657A8 8 0 1 1 13.658 2.343 8 8 0 0 1 2.343 13.657ZM6.03 4.97a.75.75 0 0 0-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 1 0 1.06 1.06L8 9.06l1.97 1.97a.75.75 0 1 0 1.06-1.06L9.06 8l1.97-1.97a.75.75 0 1 0-1.06-1.06L8 6.94 6.03 4.97Z" />
+			</svg>
+		);
+	return (
+		<svg
+			className="mt-1 size-5 text-muted-foreground shrink-0"
+			viewBox="0 0 16 16"
+			fill="currentColor"
+		>
+			<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16ZM4.5 7.25a.75.75 0 0 0 0 1.5h7a.75.75 0 0 0 0-1.5h-7Z" />
+		</svg>
+	);
+}
+
+function WorkflowConclusionBadge({
+	status,
+	conclusion,
+}: {
+	status: string | null;
+	conclusion: string | null;
+}) {
+	if (status === "in_progress")
+		return (
+			<Badge variant="secondary" className="text-[10px] text-yellow-600">
+				In Progress
+			</Badge>
+		);
+	if (status === "queued")
+		return (
+			<Badge variant="outline" className="text-[10px]">
+				Queued
+			</Badge>
+		);
+	if (conclusion === "success")
+		return (
+			<Badge
+				variant="secondary"
+				className={cn("text-[10px]", "text-green-600")}
+			>
+				Success
+			</Badge>
+		);
+	if (conclusion === "failure")
+		return (
+			<Badge variant="destructive" className="text-[10px]">
+				Failed
+			</Badge>
+		);
+	if (conclusion === "cancelled")
+		return (
+			<Badge variant="outline" className="text-[10px]">
+				Cancelled
+			</Badge>
+		);
+	if (conclusion)
+		return (
+			<Badge variant="outline" className="text-[10px]">
+				{conclusion}
+			</Badge>
+		);
+	return null;
+}
+
+function WorkflowConclusionBadgeSmall({
+	status,
+	conclusion,
+}: {
+	status: string | null;
+	conclusion: string | null;
+}) {
+	if (status === "in_progress")
+		return <span className="size-2 rounded-full bg-yellow-500 shrink-0" />;
+	if (conclusion === "success")
+		return <span className="size-2 rounded-full bg-green-500 shrink-0" />;
+	if (conclusion === "failure")
+		return <span className="size-2 rounded-full bg-red-500 shrink-0" />;
+	if (conclusion === "cancelled")
+		return (
+			<span className="size-2 rounded-full bg-muted-foreground shrink-0" />
+		);
+	return null;
+}
+
+function StepDot({ conclusion }: { conclusion: string | null }) {
+	if (conclusion === "success")
+		return (
+			<svg
+				className="size-2.5 text-green-600 shrink-0"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
+			</svg>
+		);
+	if (conclusion === "failure")
+		return (
+			<svg
+				className="size-2.5 text-red-600 shrink-0"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+			</svg>
+		);
+	return (
+		<svg
+			className="size-2.5 text-muted-foreground shrink-0"
+			viewBox="0 0 16 16"
+			fill="currentColor"
+		>
+			<path d="M8 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
+		</svg>
+	);
+}
+
 // ==========================================================================
 // MAIN LAYOUT — Three-panel resizable
 // ==========================================================================
@@ -1894,11 +2454,17 @@ export function HubLayout() {
 										name={name}
 										prNumber={itemNumber}
 									/>
-								) : (
+								) : tab === "issues" ? (
 									<IssueDetailContent
 										owner={owner}
 										name={name}
 										issueNumber={itemNumber}
+									/>
+								) : (
+									<WorkflowRunDetailContent
+										owner={owner}
+										name={name}
+										runNumber={itemNumber}
 									/>
 								)}
 							</div>

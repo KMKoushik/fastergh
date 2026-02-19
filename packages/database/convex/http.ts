@@ -1,10 +1,18 @@
+import "./polyfills";
 import { httpRouter } from "convex/server";
 import { Effect, Schema } from "effect";
 import { internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
+import { authComponent, createAuth } from "./auth";
 import { verifyWebhookSignature } from "./shared/webhookVerify";
 
 const http = httpRouter();
+
+// ---------------------------------------------------------------------------
+// Better Auth HTTP routes
+// ---------------------------------------------------------------------------
+
+authComponent.registerRoutes(http, createAuth);
 
 // ---------------------------------------------------------------------------
 // Tagged errors for the webhook pipeline
