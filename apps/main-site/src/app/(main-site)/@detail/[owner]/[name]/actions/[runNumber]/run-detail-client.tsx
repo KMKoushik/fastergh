@@ -77,8 +77,11 @@ export function RunDetailClient({
 
 	if (run === null) {
 		return (
-			<div className="py-8 text-center">
-				<h2 className="text-base font-semibold">Run #{runNumber}</h2>
+			<div className="flex flex-col items-center justify-center py-12 text-center">
+				<div className="flex size-10 items-center justify-center rounded-full bg-muted/40">
+					<Circle className="size-5 text-muted-foreground/60" />
+				</div>
+				<h2 className="mt-3 text-sm font-semibold">Run #{runNumber}</h2>
 				<p className="mt-1 text-xs text-muted-foreground">Not synced yet.</p>
 			</div>
 		);
@@ -86,7 +89,7 @@ export function RunDetailClient({
 
 	return (
 		<div className="h-full overflow-y-auto">
-			<div className="p-4">
+			<div className="mx-auto max-w-4xl p-4">
 				{/* Header */}
 				<div className="flex items-start gap-2">
 					<RunConclusionIcon
@@ -95,36 +98,45 @@ export function RunDetailClient({
 						large
 					/>
 					<div className="min-w-0 flex-1">
-						<h1 className="text-lg font-bold break-words leading-tight">
+						<h1 className="text-base font-semibold break-words leading-tight">
 							{run.workflowName ?? `Workflow Run #${run.runNumber}`}
 						</h1>
-						<div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-							<span>#{run.runNumber}</span>
+						<div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+							<span className="tabular-nums">#{run.runNumber}</span>
 							{run.conclusion && (
-								<ConclusionBadge conclusion={run.conclusion} />
+								<>
+									<span className="text-muted-foreground/40">&middot;</span>
+									<ConclusionBadge conclusion={run.conclusion} />
+								</>
 							)}
 							{!run.conclusion && run.status && (
-								<Badge variant="outline" className="text-[10px]">
-									{run.status}
-								</Badge>
+								<>
+									<span className="text-muted-foreground/40">&middot;</span>
+									<Badge variant="outline" className="text-[10px]">
+										{run.status}
+									</Badge>
+								</>
 							)}
 							{run.actorLogin && (
-								<span className="flex items-center gap-1">
-									<Avatar className="size-4">
-										<AvatarImage src={run.actorAvatarUrl ?? undefined} />
-										<AvatarFallback className="text-[8px]">
-											{run.actorLogin[0]?.toUpperCase()}
-										</AvatarFallback>
-									</Avatar>
-									{run.actorLogin}
-								</span>
+								<>
+									<span className="text-muted-foreground/40">&middot;</span>
+									<span className="flex items-center gap-1">
+										<Avatar className="size-3.5">
+											<AvatarImage src={run.actorAvatarUrl ?? undefined} />
+											<AvatarFallback className="text-[7px]">
+												{run.actorLogin[0]?.toUpperCase()}
+											</AvatarFallback>
+										</Avatar>
+										{run.actorLogin}
+									</span>
+								</>
 							)}
 						</div>
 					</div>
 				</div>
 
 				{/* Metadata */}
-				<div className="mt-3 flex flex-wrap gap-1.5">
+				<div className="mt-2.5 flex flex-wrap items-center gap-1.5">
 					<Badge variant="outline" className="text-[10px]">
 						{run.event}
 					</Badge>
@@ -133,20 +145,24 @@ export function RunDetailClient({
 							{run.headBranch}
 						</Badge>
 					)}
-					<Badge variant="outline" className="text-[10px] font-mono">
+					<Badge
+						variant="outline"
+						className="text-[10px] font-mono tabular-nums"
+					>
 						{run.headSha.slice(0, 7)}
 					</Badge>
-					<span className="text-xs text-muted-foreground">
+					<span className="text-[11px] text-muted-foreground tabular-nums">
 						Attempt {run.runAttempt}
 					</span>
-					<span className="text-xs text-muted-foreground">
-						Updated {formatRelative(run.updatedAt)}
+					<span className="text-muted-foreground/40">&middot;</span>
+					<span className="text-[11px] text-muted-foreground">
+						{formatRelative(run.updatedAt)}
 					</span>
 					{run.htmlUrl && (
 						<Link
 							href={run.htmlUrl}
 							target="_blank"
-							className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 no-underline"
+							className="ml-auto text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5 no-underline"
 						>
 							<ExternalLink className="size-3" />
 							GitHub
@@ -156,11 +172,11 @@ export function RunDetailClient({
 
 				{/* Jobs */}
 				{run.jobs.length > 0 && (
-					<div className="mt-5">
-						<h2 className="text-sm font-semibold mb-2">
+					<div className="mt-4">
+						<h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
 							Jobs ({run.jobs.length})
 						</h2>
-						<div className="space-y-2">
+						<div className="space-y-1.5">
 							{run.jobs.map((job) => (
 								<JobCard key={job.githubJobId} job={job} />
 							))}
@@ -179,19 +195,19 @@ function JobCard({ job }: { job: WorkflowJob }) {
 	const duration = jobDuration(job.startedAt, job.completedAt);
 
 	return (
-		<Card>
+		<Card className="overflow-hidden">
 			<CardHeader className="px-3 py-2">
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-1.5">
 					<RunConclusionIcon
 						status={job.status}
 						conclusion={job.conclusion}
 						large={false}
 					/>
-					<span className="text-xs font-semibold truncate">{job.name}</span>
+					<span className="text-xs font-medium truncate">{job.name}</span>
 					{job.conclusion && <ConclusionBadge conclusion={job.conclusion} />}
 					{duration && (
-						<span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground shrink-0">
-							<Clock className="size-3" />
+						<span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground tabular-nums shrink-0">
+							<Clock className="size-2.5" />
 							{duration}
 						</span>
 					)}
@@ -199,18 +215,23 @@ function JobCard({ job }: { job: WorkflowJob }) {
 			</CardHeader>
 			{steps.length > 0 && (
 				<CardContent className="px-3 pb-2 pt-0">
-					<div className="divide-y">
+					<div className="divide-y divide-border/50">
 						{steps.map((step, i) => (
-							<div key={i} className="flex items-center gap-2 py-1 text-[11px]">
+							<div
+								key={i}
+								className="flex items-center gap-1.5 py-1 text-[11px]"
+							>
 								<StepStatusIcon
 									status={step.status}
 									conclusion={step.conclusion}
 								/>
-								<span className="truncate">{step.name}</span>
+								<span className="truncate text-muted-foreground">
+									{step.name}
+								</span>
 								{step.conclusion && step.conclusion !== "skipped" && (
 									<span
 										className={cn(
-											"ml-auto text-[10px] shrink-0",
+											"ml-auto text-[10px] shrink-0 tabular-nums",
 											step.conclusion === "success"
 												? "text-green-600"
 												: step.conclusion === "failure"

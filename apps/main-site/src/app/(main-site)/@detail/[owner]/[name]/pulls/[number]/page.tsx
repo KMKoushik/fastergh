@@ -1,8 +1,5 @@
 import { Suspense } from "react";
-import {
-	cachedGetPullRequestDetail,
-	cachedListPrFiles,
-} from "@/lib/server-queries";
+import { serverQueries } from "@/lib/server-queries";
 import { DetailSkeleton } from "../../../../../_components/skeletons";
 import { PrDetailClient } from "./pr-detail-client";
 
@@ -11,12 +8,12 @@ export default function PrDetailSlot(props: {
 }) {
 	return (
 		<Suspense fallback={<DetailSkeleton />}>
-			<PrDetailCached paramsPromise={props.params} />
+			<PrDetailContent paramsPromise={props.params} />
 		</Suspense>
 	);
 }
 
-async function PrDetailCached({
+async function PrDetailContent({
 	paramsPromise,
 }: {
 	paramsPromise: Promise<{ owner: string; name: string; number: string }>;
@@ -26,8 +23,16 @@ async function PrDetailCached({
 	const num = Number.parseInt(params.number, 10);
 
 	const [initialPr, initialFiles] = await Promise.all([
-		cachedGetPullRequestDetail(owner, name, num),
-		cachedListPrFiles(owner, name, num),
+		serverQueries.getPullRequestDetail.queryPromise({
+			ownerLogin: owner,
+			name,
+			number: num,
+		}),
+		serverQueries.listPrFiles.queryPromise({
+			ownerLogin: owner,
+			name,
+			number: num,
+		}),
 	]);
 
 	return (

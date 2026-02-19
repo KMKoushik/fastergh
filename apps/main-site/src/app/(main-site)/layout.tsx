@@ -1,5 +1,6 @@
 import { Providers } from "@packages/ui/components/providers";
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { HubShell } from "./_components/hub-shell";
 
 export const metadata: Metadata = {
@@ -22,7 +23,9 @@ export default function MainSiteLayout({
 		<Providers>
 			<HubShell sidebar={sidebar} list={list} detail={detail} />
 			{/* children slot for route pages that handle redirects etc */}
-			<div className="hidden">{children}</div>
+			<div className="hidden">
+				<Suspense>{children}</Suspense>
+			</div>
 		</Providers>
 	);
 }

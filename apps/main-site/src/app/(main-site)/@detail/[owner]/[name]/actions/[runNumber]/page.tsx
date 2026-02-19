@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { cachedGetWorkflowRunDetail } from "@/lib/server-queries";
+import { serverQueries } from "@/lib/server-queries";
 import { DetailSkeleton } from "../../../../../_components/skeletons";
 import { RunDetailClient } from "./run-detail-client";
 
@@ -8,12 +8,12 @@ export default function RunDetailSlot(props: {
 }) {
 	return (
 		<Suspense fallback={<DetailSkeleton />}>
-			<RunDetailCached paramsPromise={props.params} />
+			<RunDetailContent paramsPromise={props.params} />
 		</Suspense>
 	);
 }
 
-async function RunDetailCached({
+async function RunDetailContent({
 	paramsPromise,
 }: {
 	paramsPromise: Promise<{ owner: string; name: string; runNumber: string }>;
@@ -22,7 +22,11 @@ async function RunDetailCached({
 	const { owner, name } = params;
 	const runNumber = Number.parseInt(params.runNumber, 10);
 
-	const initialRun = await cachedGetWorkflowRunDetail(owner, name, runNumber);
+	const initialRun = await serverQueries.getWorkflowRunDetail.queryPromise({
+		ownerLogin: owner,
+		name,
+		runNumber,
+	});
 
 	return (
 		<RunDetailClient

@@ -8,35 +8,15 @@ import {
 } from "@packages/ui/components/resizable";
 import { ArrowLeft } from "lucide-react";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
-
-/**
- * Parse route info from the pathname for mobile view decisions.
- */
-function useRouteInfo() {
-	const pathname = usePathname();
-	const segments = pathname.split("/").filter(Boolean);
-
-	if (segments.length >= 2) {
-		const owner = segments[0] ?? null;
-		const name = segments[1] ?? null;
-		const tabSegment = segments[2];
-		const tab =
-			tabSegment === "issues"
-				? "issues"
-				: tabSegment === "actions"
-					? "actions"
-					: "pulls";
-		const hasDetail = segments.length >= 4;
-		return { owner, name, tab, hasDetail };
-	}
-
-	return { owner: null, name: null, tab: "pulls", hasDetail: false };
-}
+import { type ReactNode, Suspense } from "react";
 
 /**
  * Three-panel resizable shell that positions parallel route slots.
- * On mobile, shows only the deepest active panel with back navigation.
+ * Desktop always shows all three panels side-by-side.
+ * Mobile shows one panel at a time based on URL depth.
+ *
+ * The dynamic `usePathname()` call is isolated inside `<MobileView>` and
+ * wrapped in `<Suspense>` so the rest of the shell can be prerendered.
  */
 export function HubShell({
 	sidebar,
@@ -47,8 +27,6 @@ export function HubShell({
 	list: ReactNode;
 	detail: ReactNode;
 }) {
-	const { owner, name, tab, hasDetail } = useRouteInfo();
-
 	return (
 		<div className="h-dvh w-full bg-background">
 			{/* Desktop: three-panel resizable */}
@@ -85,41 +63,79 @@ export function HubShell({
 				</ResizablePanelGroup>
 			</div>
 
-			{/* Mobile: stacked view — show deepest active panel */}
+			{/* Mobile: stacked view — usePathname is isolated here */}
 			<div className="md:hidden h-full">
-				{owner && name && hasDetail ? (
-					<div className="flex h-full flex-col">
-						<div className="shrink-0 flex items-center gap-2 border-b px-3 py-2">
-							<Link
-								href={`/${owner}/${name}/${tab}`}
-								className="text-[11px] text-muted-foreground hover:text-foreground no-underline flex items-center gap-1 font-medium"
-							>
-								<ArrowLeft className="size-3" />
-								Back to list
-							</Link>
-						</div>
-						<div className="flex-1 overflow-y-auto">{detail}</div>
-					</div>
-				) : owner && name ? (
-					<div className="flex h-full flex-col">
-						<div className="shrink-0 flex items-center gap-2 border-b px-3 py-2">
-							<Link
-								href="/"
-								className="text-[11px] text-muted-foreground hover:text-foreground no-underline flex items-center gap-1 font-medium"
-							>
-								<ArrowLeft className="size-3" />
-								Repos
-							</Link>
-							<span className="text-[11px] font-semibold truncate">
-								{owner}/{name}
-							</span>
-						</div>
-						{list}
-					</div>
-				) : (
-					sidebar
-				)}
+				<Suspense>
+					<MobileView sidebar={sidebar} list={list} detail={detail} />
+				</Suspense>
 			</div>
 		</div>
 	);
+}
+
+/**
+ * Mobile panel switcher — the only component that calls `usePathname()`.
+ * Isolated inside Suspense so it doesn't block prerendering.
+ */
+function MobileView({
+	sidebar,
+	list,
+	detail,
+}: {
+	sidebar: ReactNode;
+	list: ReactNode;
+	detail: ReactNode;
+}) {
+	const pathname = usePathname();
+	const segments = pathname.split("/").filter(Boolean);
+
+	const owner = segments.length >= 2 ? segments[0] : null;
+	const name = segments.length >= 2 ? segments[1] : null;
+	const tabSegment = segments[2];
+	const tab =
+		tabSegment === "issues"
+			? "issues"
+			: tabSegment === "actions"
+				? "actions"
+				: "pulls";
+	const hasDetail = segments.length >= 4;
+
+	if (owner && name && hasDetail) {
+		return (
+			<div className="flex h-full flex-col">
+				<div className="shrink-0 flex items-center gap-2 border-b px-3 py-2">
+					<Link
+						href={`/${owner}/${name}/${tab}`}
+						className="text-[11px] text-muted-foreground hover:text-foreground no-underline flex items-center gap-1 font-medium"
+					>
+						<ArrowLeft className="size-3" />
+						Back to list
+					</Link>
+				</div>
+				<div className="flex-1 overflow-y-auto">{detail}</div>
+			</div>
+		);
+	}
+
+	if (owner && name) {
+		return (
+			<div className="flex h-full flex-col">
+				<div className="shrink-0 flex items-center gap-2 border-b px-3 py-2">
+					<Link
+						href="/"
+						className="text-[11px] text-muted-foreground hover:text-foreground no-underline flex items-center gap-1 font-medium"
+					>
+						<ArrowLeft className="size-3" />
+						Repos
+					</Link>
+					<span className="text-[11px] font-semibold truncate">
+						{owner}/{name}
+					</span>
+				</div>
+				{list}
+			</div>
+		);
+	}
+
+	return sidebar;
 }

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { cachedListIssues } from "@/lib/server-queries";
+import { serverQueries } from "@/lib/server-queries";
 import { ListSkeleton } from "../../../../_components/skeletons";
 import { IssueListClient } from "./issue-list-client";
 
@@ -13,19 +13,23 @@ export default function IssueListDefault(props: {
 }) {
 	return (
 		<Suspense fallback={<ListSkeleton />}>
-			<IssueListCached paramsPromise={props.params} />
+			<IssueListContent paramsPromise={props.params} />
 		</Suspense>
 	);
 }
 
-async function IssueListCached({
+async function IssueListContent({
 	paramsPromise,
 }: {
 	paramsPromise: Promise<{ owner: string; name: string }>;
 }) {
 	const { owner, name } = await paramsPromise;
 
-	const initialData = await cachedListIssues(owner, name, "open");
+	const initialData = await serverQueries.listIssues.queryPromise({
+		ownerLogin: owner,
+		name,
+		state: "open",
+	});
 
 	return (
 		<IssueListClient owner={owner} name={name} initialData={initialData} />
