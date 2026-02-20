@@ -56,6 +56,22 @@ type PrDetail = {
 		readonly body: string;
 		readonly createdAt: number;
 	}[];
+	readonly reviewComments: readonly {
+		readonly githubReviewCommentId: number;
+		readonly githubReviewId: number | null;
+		readonly inReplyToGithubReviewCommentId: number | null;
+		readonly authorLogin: string | null;
+		readonly authorAvatarUrl: string | null;
+		readonly body: string;
+		readonly path: string | null;
+		readonly line: number | null;
+		readonly startLine: number | null;
+		readonly side: string | null;
+		readonly startSide: string | null;
+		readonly htmlUrl: string | null;
+		readonly createdAt: number;
+		readonly updatedAt: number;
+	}[];
 };
 
 type FilesData = {

@@ -11,11 +11,21 @@ import { Input } from "@packages/ui/components/input";
 import { Link } from "@packages/ui/components/link";
 import { Skeleton } from "@packages/ui/components/skeleton";
 import { UserButton } from "@packages/ui/components/user-button";
+import { GitHubIcon } from "@packages/ui/icons/index";
+import { authClient } from "@packages/ui/lib/auth-client";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { useRepoOnboard } from "@packages/ui/rpc/repo-onboard";
 import { Array as Arr, Option, pipe, Record as Rec } from "effect";
-import { ChevronRight, Download, ExternalLink, Plus } from "lucide-react";
+import {
+	ChevronRight,
+	CircleDot,
+	Download,
+	GitPullRequest,
+	Plus,
+	Rocket,
+	TriangleAlert,
+} from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 
@@ -27,6 +37,24 @@ const GITHUB_APP_INSTALL_URL = GITHUB_APP_SLUG
 	: "";
 
 export function SidebarClient() {
+	const session = authClient.useSession();
+
+	if (session.isPending) {
+		return <SidebarSkeleton />;
+	}
+
+	if (!session.data) {
+		return <SignedOutSidebar />;
+	}
+
+	return <SignedInSidebar />;
+}
+
+// ---------------------------------------------------------------------------
+// Signed-in sidebar — personalized repo list with add/manage
+// ---------------------------------------------------------------------------
+
+function SignedInSidebar() {
 	const pathname = usePathname();
 	const segments = pathname.split("/").filter(Boolean);
 	const activeOwner = segments[0] ?? null;
@@ -146,6 +174,145 @@ export function SidebarClient() {
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Signed-out sidebar — overview + sign-in CTA
+// ---------------------------------------------------------------------------
+
+function SignedOutSidebar() {
+	const client = useProjectionQueries();
+	const reposAtom = useMemo(
+		() => client.listRepos.subscription(EmptyPayload),
+		[client],
+	);
+	const reposResult = useAtomValue(reposAtom);
+
+	const repos = (() => {
+		const v = Result.value(reposResult);
+		if (Option.isSome(v)) return v.value;
+		return null;
+	})();
+
+	return (
+		<div className="flex h-full flex-col bg-sidebar">
+			{/* Header */}
+			<div className="shrink-0 px-3 pt-3 pb-2 border-b border-sidebar-border">
+				<div className="flex items-center gap-1.5 mb-2">
+					<Rocket className="size-3.5 text-muted-foreground" />
+					<h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/70">
+						QuickHub
+					</h2>
+				</div>
+				<p className="text-[10px] text-muted-foreground leading-relaxed">
+					A real-time GitHub dashboard for your repos, PRs, issues, and CI.
+				</p>
+			</div>
+
+			{/* Repo overview (read-only) */}
+			<div className="flex-1 overflow-y-auto">
+				<div className="p-1.5">
+					{Result.isInitial(reposResult) && (
+						<div className="space-y-1 p-1">
+							{[1, 2, 3].map((i) => (
+								<div key={i} className="space-y-1 px-2 py-1.5">
+									<Skeleton className="h-3.5 w-28" />
+									<Skeleton className="h-2.5 w-20" />
+								</div>
+							))}
+						</div>
+					)}
+
+					{repos !== null && repos.length > 0 && (
+						<>
+							<p className="px-2 py-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
+								Active Repos
+							</p>
+							{repos.map((repo) => (
+								<div
+									key={repo.repositoryId}
+									className="flex flex-col gap-0.5 rounded-md px-2 py-1.5"
+								>
+									<span className="font-semibold text-foreground truncate text-xs leading-tight">
+										{repo.fullName}
+									</span>
+									<div className="flex items-center gap-2 text-[10px] tabular-nums text-muted-foreground">
+										<span className="flex items-center gap-0.5">
+											<GitPullRequest className="size-2.5 text-green-500" />
+											{repo.openPrCount}
+										</span>
+										<span className="flex items-center gap-0.5">
+											<CircleDot className="size-2.5 text-blue-500" />
+											{repo.openIssueCount}
+										</span>
+										{repo.failingCheckCount > 0 && (
+											<span className="flex items-center gap-0.5 text-red-500 font-medium">
+												<TriangleAlert className="size-2.5" />
+												{repo.failingCheckCount}
+											</span>
+										)}
+									</div>
+								</div>
+							))}
+						</>
+					)}
+
+					{repos !== null && repos.length === 0 && (
+						<div className="px-3 py-8 text-center">
+							<p className="text-[11px] text-muted-foreground">
+								Sign in to connect your repositories.
+							</p>
+						</div>
+					)}
+				</div>
+			</div>
+
+			{/* Sign-in CTA — pinned to bottom */}
+			<div className="shrink-0 border-t border-sidebar-border px-3 py-3 space-y-2">
+				<Button
+					size="sm"
+					className="w-full h-8 text-xs gap-1.5"
+					onClick={() => {
+						authClient.signIn.social({ provider: "github" });
+					}}
+				>
+					<GitHubIcon className="size-3.5" />
+					Sign in with GitHub
+				</Button>
+				<p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+					Connect your GitHub account to manage your repos
+				</p>
+			</div>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Shared sub-components
+// ---------------------------------------------------------------------------
+
+function SidebarSkeleton() {
+	return (
+		<div className="flex h-full flex-col bg-sidebar">
+			<div className="shrink-0 px-3 pt-3 pb-2 border-b border-sidebar-border">
+				<Skeleton className="h-3 w-24 mb-2" />
+				<Skeleton className="h-7 w-full" />
+			</div>
+			<div className="flex-1 overflow-y-auto">
+				<div className="space-y-1 p-2.5">
+					{[1, 2, 3].map((i) => (
+						<div key={i} className="space-y-1 px-2 py-1.5">
+							<Skeleton className="h-3.5 w-28" />
+							<Skeleton className="h-2.5 w-20" />
+						</div>
+					))}
+				</div>
+			</div>
+			<div className="shrink-0 border-t border-sidebar-border px-3 py-2">
+				<Skeleton className="h-7 w-16" />
+			</div>
+		</div>
+	);
+}
+
 /** Empty state shown when no repos are connected yet. Guides users to install the GitHub App. */
 function EmptyRepoState() {
 	return (
@@ -161,11 +328,7 @@ function EmptyRepoState() {
 			</p>
 			{GITHUB_APP_INSTALL_URL && (
 				<Button asChild size="sm" className="mt-3 h-7 text-xs w-full">
-					<a
-						href={GITHUB_APP_INSTALL_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
+					<a href={GITHUB_APP_INSTALL_URL}>
 						<Download className="size-3" />
 						Install GitHub App
 					</a>
@@ -182,14 +345,9 @@ function AddRepoSection() {
 			{/* Primary: Install GitHub App */}
 			{GITHUB_APP_INSTALL_URL && (
 				<Button asChild size="sm" className="h-7 text-xs w-full">
-					<a
-						href={GITHUB_APP_INSTALL_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
+					<a href={GITHUB_APP_INSTALL_URL}>
 						<Download className="size-3" />
 						Install GitHub App
-						<ExternalLink className="size-2.5 ml-auto opacity-50" />
 					</a>
 				</Button>
 			)}

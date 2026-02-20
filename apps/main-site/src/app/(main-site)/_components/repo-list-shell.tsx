@@ -1,10 +1,10 @@
 import { Link } from "@packages/ui/components/link";
 import { cn } from "@packages/ui/lib/utils";
-import { ArrowLeft, GitPullRequest, Play, TriangleAlert } from "lucide-react";
+import { ArrowLeft, GitPullRequest, TriangleAlert } from "lucide-react";
 import { type ReactNode, Suspense } from "react";
 import { ListSkeleton } from "./skeletons";
 
-type RepoTab = "pulls" | "issues" | "actions";
+type RepoTab = "pulls" | "issues";
 
 export async function RepoListShell({
 	paramsPromise,
@@ -58,18 +58,6 @@ export async function RepoListShell({
 					>
 						<TriangleAlert className="size-3" />
 						Issues
-					</Link>
-					<Link
-						href={`/${owner}/${name}/actions`}
-						className={cn(
-							"flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold border-b-2 -mb-px transition-colors no-underline",
-							activeTab === "actions"
-								? "border-foreground text-foreground"
-								: "border-transparent text-muted-foreground hover:text-foreground",
-						)}
-					>
-						<Play className="size-3" />
-						Actions
 					</Link>
 				</div>
 			</div>

@@ -12,8 +12,6 @@ import {
 	CircleDot,
 	GitPullRequest,
 	MessageCircle,
-	Play,
-	TriangleAlert,
 } from "lucide-react";
 import { useMemo } from "react";
 
@@ -95,8 +93,7 @@ export function RepoOverviewPanel({
 				<div className="mx-auto max-w-xl px-6 py-8">
 					<Skeleton className="h-6 w-48 mb-1" />
 					<Skeleton className="h-3 w-32 mb-6" />
-					<div className="grid grid-cols-3 gap-3 mb-6">
-						<Skeleton className="h-16 rounded-lg" />
+					<div className="grid grid-cols-2 gap-3 mb-6">
 						<Skeleton className="h-16 rounded-lg" />
 						<Skeleton className="h-16 rounded-lg" />
 					</div>
@@ -127,7 +124,7 @@ export function RepoOverviewPanel({
 
 				{/* Quick stats */}
 				{overview && (
-					<div className="grid grid-cols-3 gap-3 mb-6">
+					<div className="grid grid-cols-2 gap-3 mb-6">
 						<Link
 							href={`/${owner}/${name}/pulls`}
 							className="rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted no-underline group"
@@ -154,38 +151,6 @@ export function RepoOverviewPanel({
 							</div>
 							<p className="text-xl font-bold tabular-nums text-foreground">
 								{overview.openIssueCount}
-							</p>
-						</Link>
-						<Link
-							href={`/${owner}/${name}/actions`}
-							className={cn(
-								"rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted no-underline group",
-								overview.failingCheckCount > 0 &&
-									"border-red-500/20 bg-red-500/[0.02]",
-							)}
-						>
-							<div className="flex items-center gap-1.5 mb-1">
-								<TriangleAlert
-									className={cn(
-										"size-3",
-										overview.failingCheckCount > 0
-											? "text-red-500"
-											: "text-muted-foreground",
-									)}
-								/>
-								<span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-									Failing
-								</span>
-							</div>
-							<p
-								className={cn(
-									"text-xl font-bold tabular-nums",
-									overview.failingCheckCount > 0
-										? "text-red-500"
-										: "text-foreground",
-								)}
-							>
-								{overview.failingCheckCount}
 							</p>
 						</Link>
 					</div>
@@ -303,7 +268,7 @@ export function RepoOverviewPanel({
 				)}
 
 				{/* Quick nav links */}
-				<div className="grid grid-cols-3 gap-2">
+				<div className="grid grid-cols-2 gap-2">
 					<Link
 						href={`/${owner}/${name}/pulls`}
 						className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors no-underline"
@@ -317,13 +282,6 @@ export function RepoOverviewPanel({
 					>
 						<CircleDot className="size-3.5" />
 						All Issues
-					</Link>
-					<Link
-						href={`/${owner}/${name}/actions`}
-						className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors no-underline"
-					>
-						<Play className="size-3.5" />
-						Actions
 					</Link>
 				</div>
 			</div>

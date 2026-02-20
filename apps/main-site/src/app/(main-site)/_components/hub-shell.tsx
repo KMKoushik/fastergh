@@ -17,7 +17,7 @@ import { type ReactNode, Suspense } from "react";
  * Mobile shows one panel at a time based on URL depth.
  *
  * The left panel shows either the repo sidebar (at /) or the list view
- * (at /owner/name/pulls|issues|actions) — swapped by Next.js parallel routes.
+ * (at /owner/name/pulls|issues) — swapped by Next.js parallel routes.
  *
  * The dynamic `usePathname()` call is isolated inside `<MobileView>` and
  * wrapped in `<Suspense>` so the rest of the shell can be prerendered.
@@ -82,12 +82,7 @@ function MobileView({
 	const owner = segments.length >= 2 ? segments[0] : null;
 	const name = segments.length >= 2 ? segments[1] : null;
 	const tabSegment = segments[2];
-	const tab =
-		tabSegment === "issues"
-			? "issues"
-			: tabSegment === "actions"
-				? "actions"
-				: "pulls";
+	const tab = tabSegment === "issues" ? "issues" : "pulls";
 	const hasDetail = segments.length >= 4;
 
 	// Detail view: show detail with back-to-list link
