@@ -1,13 +1,13 @@
 "use client";
 
-import { Result, useAtom } from "@effect-atom/atom-react";
+import { Result, useAtomValue } from "@effect-atom/atom-react";
 import { Link } from "@packages/ui/components/link";
 import { cn } from "@packages/ui/lib/utils";
 import { useCodeBrowse } from "@packages/ui/rpc/code-browse";
 import { Option } from "effect";
 import { ChevronRight, File, Folder, Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Tree building
@@ -190,13 +190,18 @@ export function FileTreeClient({
 	name: string;
 }) {
 	const client = useCodeBrowse();
-	const [treeResult, fetchTree] = useAtom(client.getFileTree.call);
+	const treeAtom = useMemo(
+		() =>
+			client.getFileTree.callAsQuery({
+				ownerLogin: owner,
+				name,
+				sha: "HEAD",
+			}),
+		[client, owner, name],
+	);
+	const treeResult = useAtomValue(treeAtom);
 	const searchParams = useSearchParams();
 	const activePath = searchParams.get("path");
-
-	useEffect(() => {
-		fetchTree({ ownerLogin: owner, name, sha: "HEAD" });
-	}, [fetchTree, owner, name]);
 
 	const isLoading = Result.isWaiting(treeResult);
 	const isInitial = Result.isInitial(treeResult);

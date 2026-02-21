@@ -1,4 +1,4 @@
-import { FileViewerClient } from "./file-viewer-client";
+import { FileViewer } from "./file-viewer";
 
 /**
  * Fallback for the @detail slot when navigating to /code without a path.
@@ -12,5 +12,5 @@ export default async function CodeDetailDefault({
 }) {
 	const { owner, name } = await params;
 	const { path } = await searchParams;
-	return <FileViewerClient owner={owner} name={name} path={path ?? null} />;
+	return <FileViewer owner={owner} name={name} path={path ?? null} />;
 }

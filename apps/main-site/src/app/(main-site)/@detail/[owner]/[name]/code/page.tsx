@@ -1,4 +1,4 @@
-import { FileViewerClient } from "./file-viewer-client";
+import { FileViewer } from "./file-viewer";
 
 export default async function CodeDetailPage({
 	params,
@@ -9,5 +9,5 @@ export default async function CodeDetailPage({
 }) {
 	const { owner, name } = await params;
 	const { path } = await searchParams;
-	return <FileViewerClient owner={owner} name={name} path={path ?? null} />;
+	return <FileViewer owner={owner} name={name} path={path ?? null} />;
 }
