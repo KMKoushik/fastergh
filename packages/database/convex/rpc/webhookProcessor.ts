@@ -305,6 +305,17 @@ const handlePullRequestEvent = (
 				)
 			: [];
 
+		// Extract labels
+		const labelNames = Array.isArray(pr.labels)
+			? Arr.filter(
+					Arr.map(pr.labels, (labelInput) => {
+						const label = obj(labelInput);
+						return str(label.name);
+					}),
+					Predicate.isNotNull,
+				)
+			: [];
+
 		const githubUpdatedAt = isoToMs(pr.updated_at) ?? now;
 
 		const data = {
@@ -318,6 +329,7 @@ const handlePullRequestEvent = (
 			authorUserId: authorUser?.githubUserId ?? null,
 			assigneeUserIds,
 			requestedReviewerUserIds,
+			labelNames,
 			baseRefName: str(base.ref) ?? "",
 			headRefName: str(head.ref) ?? "",
 			headSha: str(head.sha) ?? "",

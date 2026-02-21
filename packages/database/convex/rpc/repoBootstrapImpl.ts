@@ -116,6 +116,7 @@ bootstrapRepoDef.implement((args) =>
 
 			const pullRequests = allPrs.map((pr) => {
 				const authorUserId = collectUser(pr.user);
+				const labelNames = pr.labels.map((label) => label.name);
 
 				return {
 					githubPrId: pr.id,
@@ -127,6 +128,7 @@ bootstrapRepoDef.implement((args) =>
 					authorUserId,
 					assigneeUserIds: [],
 					requestedReviewerUserIds: [],
+					labelNames,
 					baseRefName: pr.base.ref,
 					headRefName: pr.head.ref,
 					headSha: pr.head.sha,

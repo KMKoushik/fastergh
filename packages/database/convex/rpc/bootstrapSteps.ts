@@ -274,6 +274,7 @@ export const fetchPullRequestsChunk = internalAction({
 			// Transform the page
 			const pullRequests = page.map((pr) => {
 				const authorUserId = pr.user ? collectUser(pr.user) : null;
+				const labelNames = pr.labels.map((label) => label.name);
 
 				return {
 					githubPrId: pr.id,
@@ -285,6 +286,7 @@ export const fetchPullRequestsChunk = internalAction({
 					authorUserId,
 					assigneeUserIds: [],
 					requestedReviewerUserIds: [],
+					labelNames,
 					baseRefName: pr.base.ref,
 					headRefName: pr.head.ref,
 					headSha: pr.head.sha,

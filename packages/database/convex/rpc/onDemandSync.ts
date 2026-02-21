@@ -593,6 +593,8 @@ syncPullRequestDef.implement((args) =>
 
 		const authorUserId = users.collect(prData.user);
 
+		const labelNames = prData.labels.map((label) => label.name);
+
 		const pr = {
 			githubPrId: prData.id,
 			number: prData.number,
@@ -603,6 +605,7 @@ syncPullRequestDef.implement((args) =>
 			authorUserId,
 			assigneeUserIds: [],
 			requestedReviewerUserIds: [],
+			labelNames,
 			baseRefName: prData.base.ref,
 			headRefName: prData.head.ref,
 			headSha: prData.head.sha,
