@@ -1,6 +1,6 @@
 "use client";
 
-import { Result, useAtom } from "@effect-atom/atom-react";
+import { Result, useAtom, useAtomValue } from "@effect-atom/atom-react";
 import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import {
 	Avatar,
@@ -12,19 +12,36 @@ import { Button } from "@packages/ui/components/button";
 import { Card, CardContent, CardHeader } from "@packages/ui/components/card";
 import { Input } from "@packages/ui/components/input";
 import { Link } from "@packages/ui/components/link";
+import { Separator } from "@packages/ui/components/separator";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@packages/ui/components/tooltip";
 import { cn } from "@packages/ui/lib/utils";
 import { useGithubActions } from "@packages/ui/rpc/github-actions";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Option } from "effect";
 import {
+	AlertTriangle,
+	Ban,
+	Check,
 	ChevronDown,
 	Clock,
 	ExternalLink,
 	GitBranch,
 	Loader2,
 	Play,
+	RefreshCw,
+	RotateCcw,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 
 type WorkflowJob = {
 	readonly githubJobId: number;
@@ -164,6 +181,15 @@ export function WorkflowRunDetailClient({
 						</Badge>
 					)}
 				</div>
+
+				{/* Actions control bar */}
+				<RunControlBar
+					owner={owner}
+					name={name}
+					githubRunId={run.githubRunId}
+					status={run.status}
+					conclusion={run.conclusion}
+				/>
 
 				{/* Jobs */}
 				{run.jobs.length > 0 && (
@@ -318,9 +344,16 @@ function JobLogsPanel({
 	githubJobId: number;
 }) {
 	const githubActions = useGithubActions();
-	const [logsResult, fetchLogs] = useAtom(
-		githubActions.fetchWorkflowJobLogs.call,
-	);
+	const [refreshCount, setRefreshCount] = useState(0);
+	const logsAtom = useMemo(() => {
+		void refreshCount;
+		return githubActions.fetchWorkflowJobLogs.callAsQuery({
+			ownerLogin: owner,
+			name,
+			jobId: githubJobId,
+		});
+	}, [githubActions, owner, name, githubJobId, refreshCount]);
+	const logsResult = useAtomValue(logsAtom);
 	const [logFilter, setLogFilter] = useState("");
 	const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
 		"idle",
@@ -340,23 +373,6 @@ function JobLogsPanel({
 			.filter((line) => line.toLowerCase().includes(query))
 			.join("\n");
 	}, [logPayload, logFilter]);
-
-	useEffect(() => {
-		if (hasLogsResult || isLogsLoading || Option.isSome(logsError)) return;
-		fetchLogs({
-			ownerLogin: owner,
-			name,
-			jobId: githubJobId,
-		});
-	}, [
-		hasLogsResult,
-		isLogsLoading,
-		logsError,
-		fetchLogs,
-		owner,
-		name,
-		githubJobId,
-	]);
 
 	useEffect(() => {
 		if (copyState !== "copied") return;
@@ -397,13 +413,7 @@ function JobLogsPanel({
 						size="sm"
 						className="h-6 px-2 text-[10px]"
 						disabled={isLogsLoading}
-						onClick={() =>
-							fetchLogs({
-								ownerLogin: owner,
-								name,
-								jobId: githubJobId,
-							})
-						}
+						onClick={() => setRefreshCount((current) => current + 1)}
 					>
 						{isLogsLoading ? (
 							<>
@@ -490,6 +500,212 @@ function JobLogsPanel({
 			)}
 		</div>
 	);
+}
+
+// ---------------------------------------------------------------------------
+// Run control bar — rerun / rerun failed / cancel
+// ---------------------------------------------------------------------------
+
+type ControlAction = "rerun" | "rerunFailed" | "cancel";
+
+type ControlButtonState = "idle" | "pending" | "success" | "error";
+
+function deriveControlState(
+	result: Result.Result<{ accepted: boolean }, { message: string }>,
+): ControlButtonState {
+	if (Result.isWaiting(result)) return "pending";
+	if (Option.isSome(Result.error(result))) return "error";
+	if (Option.isSome(Result.value(result))) return "success";
+	return "idle";
+}
+
+function RunControlBar({
+	owner,
+	name,
+	githubRunId,
+	status,
+	conclusion,
+}: {
+	owner: string;
+	name: string;
+	githubRunId: number;
+	status: string | null;
+	conclusion: string | null;
+}) {
+	const githubActions = useGithubActions();
+
+	const [rerunResult, rerunAll] = useAtom(githubActions.rerunWorkflowRun.call);
+	const [rerunFailedResult, rerunFailed] = useAtom(
+		githubActions.rerunFailedJobs.call,
+	);
+	const [cancelResult, cancelRun] = useAtom(
+		githubActions.cancelWorkflowRun.call,
+	);
+
+	const rerunState = deriveControlState(rerunResult);
+	const rerunFailedState = deriveControlState(rerunFailedResult);
+	const cancelState = deriveControlState(cancelResult);
+
+	const isRunning = status === "in_progress" || status === "queued";
+	const isCompleted = status === "completed";
+	const hasFailed = conclusion === "failure";
+
+	const handleRerunAll = useCallback(() => {
+		rerunAll({ ownerLogin: owner, name, githubRunId });
+	}, [rerunAll, owner, name, githubRunId]);
+
+	const handleRerunFailed = useCallback(() => {
+		rerunFailed({ ownerLogin: owner, name, githubRunId });
+	}, [rerunFailed, owner, name, githubRunId]);
+
+	const handleCancel = useCallback(() => {
+		cancelRun({ ownerLogin: owner, name, githubRunId });
+	}, [cancelRun, owner, name, githubRunId]);
+
+	const showRerun = isCompleted;
+	const showRerunFailed = isCompleted && hasFailed;
+	const showCancel = isRunning;
+
+	if (!showRerun && !showRerunFailed && !showCancel) {
+		return null;
+	}
+
+	return (
+		<>
+			<Separator className="mt-3" />
+			<div className="mt-3 flex items-center gap-1.5">
+				{showRerunFailed && (
+					<ControlButton
+						action="rerunFailed"
+						state={rerunFailedState}
+						onClick={handleRerunFailed}
+						icon={<RotateCcw className="size-3" />}
+						label="Re-run failed"
+						tooltip="Re-run only the failed jobs in this workflow"
+						variant="primary"
+					/>
+				)}
+				{showRerun && (
+					<ControlButton
+						action="rerun"
+						state={rerunState}
+						onClick={handleRerunAll}
+						icon={<RefreshCw className="size-3" />}
+						label="Re-run all"
+						tooltip="Re-run all jobs in this workflow"
+						variant="secondary"
+					/>
+				)}
+				{showCancel && (
+					<ControlButton
+						action="cancel"
+						state={cancelState}
+						onClick={handleCancel}
+						icon={<Ban className="size-3" />}
+						label="Cancel"
+						tooltip="Cancel this in-progress workflow run"
+						variant="destructive"
+					/>
+				)}
+			</div>
+		</>
+	);
+}
+
+function ControlButton({
+	action,
+	state,
+	onClick,
+	icon,
+	label,
+	tooltip,
+	variant,
+}: {
+	action: ControlAction;
+	state: ControlButtonState;
+	onClick: () => void;
+	icon: ReactNode;
+	label: string;
+	tooltip: string;
+	variant: "primary" | "secondary" | "destructive";
+}) {
+	const isDisabled = state === "pending" || state === "success";
+
+	const variantClasses = {
+		primary: cn(
+			"border-orange-500/30 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20 hover:border-orange-500/50",
+			"dark:border-orange-400/30 dark:bg-orange-400/10 dark:text-orange-400 dark:hover:bg-orange-400/20",
+		),
+		secondary: cn(
+			"border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground",
+		),
+		destructive: cn(
+			"border-red-500/30 bg-red-500/10 text-red-600 hover:bg-red-500/20 hover:border-red-500/50",
+			"dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-400 dark:hover:bg-red-400/20",
+		),
+	};
+
+	const stateLabel =
+		state === "pending"
+			? getProgressLabel(action)
+			: state === "success"
+				? getSuccessLabel(action)
+				: state === "error"
+					? "Failed"
+					: label;
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					variant="outline"
+					size="sm"
+					className={cn(
+						"h-7 gap-1.5 px-2.5 text-[11px] font-medium transition-all duration-200",
+						variantClasses[variant],
+						state === "success" &&
+							"border-green-500/30 bg-green-500/10 text-green-600 dark:border-green-400/30 dark:bg-green-400/10 dark:text-green-400",
+						state === "error" &&
+							"border-red-500/30 bg-red-500/10 text-red-600 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-400",
+						isDisabled && "pointer-events-none opacity-60",
+					)}
+					disabled={isDisabled}
+					onClick={onClick}
+				>
+					{state === "pending" && <Loader2 className="size-3 animate-spin" />}
+					{state === "success" && <Check className="size-3" />}
+					{state === "error" && <AlertTriangle className="size-3" />}
+					{state === "idle" && icon}
+					<span>{stateLabel}</span>
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent side="bottom">
+				{state === "error" ? "Something went wrong. Try again." : tooltip}
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
+function getProgressLabel(action: ControlAction): string {
+	switch (action) {
+		case "rerun":
+			return "Re-running...";
+		case "rerunFailed":
+			return "Re-running...";
+		case "cancel":
+			return "Cancelling...";
+	}
+}
+
+function getSuccessLabel(action: ControlAction): string {
+	switch (action) {
+		case "rerun":
+			return "Re-run queued";
+		case "rerunFailed":
+			return "Re-run queued";
+		case "cancel":
+			return "Cancelled";
+	}
 }
 
 // ---------------------------------------------------------------------------

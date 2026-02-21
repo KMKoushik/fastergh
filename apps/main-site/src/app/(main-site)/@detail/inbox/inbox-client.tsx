@@ -6,8 +6,10 @@ import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Link } from "@packages/ui/components/link";
 import { Skeleton } from "@packages/ui/components/skeleton";
+import { authClient } from "@packages/ui/lib/auth-client";
 import { cn } from "@packages/ui/lib/utils";
 import { useNotifications } from "@packages/ui/rpc/notifications";
+import { Option as Opt } from "effect";
 import {
 	Bell,
 	CircleDot,
@@ -19,7 +21,7 @@ import {
 	ShieldAlert,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -153,11 +155,43 @@ export function InboxClient({
 		notificationsAtom,
 		initialNotifications,
 	);
-	const [syncResult, triggerSync] = useAtom(client.syncNotifications.call);
 	const [, markRead] = useAtom(client.markNotificationRead.mutate);
+	const [syncResult, syncNotifications] = useAtom(
+		client.syncNotifications.call,
+	);
 	const router = useRouter();
+	const autoSyncAtom = useMemo(
+		() => client.syncNotifications.callAsQuery(EmptyPayload),
+		[client],
+	);
+	const autoSyncResult = useAtomValue(autoSyncAtom);
 
-	const isSyncing = Result.isWaiting(syncResult);
+	const isSyncing =
+		Result.isWaiting(syncResult) || Result.isWaiting(autoSyncResult);
+	const syncErrorOption = Result.error(syncResult);
+	const syncErrorMessage = useMemo(() => {
+		if (Opt.isNone(syncErrorOption)) return null;
+		const error = syncErrorOption.value;
+		if (
+			typeof error === "object" &&
+			error !== null &&
+			"reason" in error &&
+			typeof error.reason === "string"
+		) {
+			return error.reason;
+		}
+		if (
+			typeof error === "object" &&
+			error !== null &&
+			"message" in error &&
+			typeof error.message === "string"
+		) {
+			return error.message;
+		}
+		return "Sync failed. Reconnect GitHub, then try Sync again.";
+	}, [syncErrorOption]);
+
+	const hasSyncError = syncErrorMessage !== null;
 
 	if (Result.isInitial(result)) {
 		return <InboxSkeleton />;
@@ -214,7 +248,7 @@ export function InboxClient({
 						size="sm"
 						className="h-7 text-xs gap-1.5"
 						disabled={isSyncing}
-						onClick={() => triggerSync({})}
+						onClick={() => syncNotifications(EmptyPayload)}
 					>
 						<RefreshCw className={cn("size-3", isSyncing && "animate-spin")} />
 						{isSyncing ? "Syncing..." : "Sync"}
@@ -227,6 +261,36 @@ export function InboxClient({
 					<InboxStat label="Repositories" value={repoStats.length} />
 					<InboxStat label="Reasons" value={reasonStats.length} />
 				</div>
+
+				{hasSyncError && (
+					<div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+						<p className="text-xs text-destructive">{syncErrorMessage}</p>
+						<div className="mt-2 flex gap-2">
+							<Button
+								size="sm"
+								variant="outline"
+								className="h-6 text-[11px]"
+								onClick={() => {
+									authClient.signIn.social({
+										provider: "github",
+										callbackURL: "/inbox",
+									});
+								}}
+							>
+								Reconnect GitHub
+							</Button>
+							<Button
+								size="sm"
+								variant="ghost"
+								className="h-6 text-[11px]"
+								disabled={isSyncing}
+								onClick={() => syncNotifications(EmptyPayload)}
+							>
+								Retry Sync
+							</Button>
+						</div>
+					</div>
+				)}
 
 				<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
 					<div>

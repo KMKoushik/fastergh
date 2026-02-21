@@ -1,14 +1,12 @@
 "use client";
 
-import { Result, useAtom } from "@effect-atom/atom-react";
 import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Input } from "@packages/ui/components/input";
 import { Link } from "@packages/ui/components/link";
-import { Textarea } from "@packages/ui/components/textarea";
+import { LinkButton } from "@packages/ui/components/link-button";
 import { useInfinitePaginationWithInitial } from "@packages/ui/hooks/use-paginated-atom";
 import { cn } from "@packages/ui/lib/utils";
-import { useGithubWrite } from "@packages/ui/rpc/github-write";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import {
@@ -20,7 +18,6 @@ import {
 	Search,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { parseAsString, useQueryState } from "nuqs";
 import {
 	useCallback,
 	useEffect,
@@ -67,19 +64,8 @@ export function IssueListClient({
 	const [stateFilter, setStateFilter] = useState<"open" | "closed" | "all">(
 		"open",
 	);
-	const [isComposerOpen, setIsComposerOpen] = useState(false);
 	const [titleFilter, setTitleFilter] = useState("");
 	const filterInputId = useId();
-	const [newIssueQuery, setNewIssueQuery] = useQueryState(
-		"new",
-		parseAsString.withDefault(""),
-	);
-
-	useEffect(() => {
-		if (newIssueQuery !== "1") return;
-		setIsComposerOpen(true);
-		void setNewIssueQuery(null);
-	}, [newIssueQuery, setNewIssueQuery]);
 
 	const client = useProjectionQueries();
 	const paginatedAtom = useMemo(
@@ -231,26 +217,16 @@ export function IssueListClient({
 				</div>
 			</div>
 			<div className="mb-2 px-1">
-				<Button
-					variant={isComposerOpen ? "default" : "outline"}
+				<LinkButton
+					href={`/${owner}/${name}/issues/new`}
+					variant="outline"
 					size="sm"
 					className="h-7 w-full justify-start gap-1.5 text-[11px]"
-					onClick={() => setIsComposerOpen((value) => !value)}
-					disabled={repositoryId === null}
 				>
 					<Plus className="size-3" />
 					New issue
-				</Button>
+				</LinkButton>
 			</div>
-
-			{isComposerOpen && repositoryId !== null && (
-				<CreateIssueComposer
-					owner={owner}
-					name={name}
-					repositoryId={repositoryId}
-					onCreated={() => setIsComposerOpen(false)}
-				/>
-			)}
 
 			<div className="flex gap-0.5 mb-1.5 px-1">
 				{(["open", "closed", "all"] as const).map((f) => (
@@ -349,99 +325,6 @@ export function IssueListClient({
 					<Loader2 className="size-4 animate-spin text-muted-foreground" />
 				</div>
 			)}
-		</div>
-	);
-}
-
-function CreateIssueComposer({
-	owner,
-	name,
-	repositoryId,
-	onCreated,
-}: {
-	owner: string;
-	name: string;
-	repositoryId: number;
-	onCreated: () => void;
-}) {
-	const writeClient = useGithubWrite();
-	const [createIssueResult, createIssue] = useAtom(
-		writeClient.createIssue.mutate,
-	);
-	const correlationPrefix = useId();
-	const [title, setTitle] = useState("");
-	const [body, setBody] = useState("");
-	const [labelsInput, setLabelsInput] = useState("");
-
-	const isSubmitting = Result.isWaiting(createIssueResult);
-	const isSuccess = Result.isSuccess(createIssueResult);
-
-	useEffect(() => {
-		if (!isSuccess) return;
-		setTitle("");
-		setBody("");
-		setLabelsInput("");
-		onCreated();
-	}, [isSuccess, onCreated]);
-
-	const labels = labelsInput
-		.split(",")
-		.map((label) => label.trim())
-		.filter((label) => label.length > 0);
-
-	return (
-		<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2 space-y-2">
-			<Input
-				placeholder="Issue title"
-				value={title}
-				onChange={(event) => setTitle(event.target.value)}
-				disabled={isSubmitting}
-				className="h-8 text-xs"
-			/>
-			<Textarea
-				placeholder="Describe the issue (optional)"
-				value={body}
-				onChange={(event) => setBody(event.target.value)}
-				disabled={isSubmitting}
-				rows={4}
-				className="text-xs"
-			/>
-			<Input
-				placeholder="Labels (comma-separated, optional)"
-				value={labelsInput}
-				onChange={(event) => setLabelsInput(event.target.value)}
-				disabled={isSubmitting}
-				className="h-8 text-xs"
-			/>
-			<div className="flex items-center justify-between gap-2">
-				{Result.isFailure(createIssueResult) ? (
-					<p className="text-[10px] text-destructive">
-						Failed to create issue.
-					</p>
-				) : (
-					<span className="text-[10px] text-muted-foreground">
-						Creates issue directly on GitHub
-					</span>
-				)}
-				<Button
-					size="sm"
-					className="h-7 text-[11px]"
-					disabled={title.trim().length === 0 || isSubmitting}
-					onClick={() => {
-						createIssue({
-							correlationId: `${correlationPrefix}-create-issue-${Date.now()}`,
-							ownerLogin: owner,
-							name,
-							repositoryId,
-							title: title.trim(),
-							body: body.trim().length > 0 ? body.trim() : undefined,
-							labels: labels.length > 0 ? labels : undefined,
-						});
-					}}
-				>
-					{isSubmitting ? "Creating..." : "Create issue"}
-				</Button>
-			</div>
 		</div>
 	);
 }

@@ -20,6 +20,7 @@ import {
 	PopoverTrigger,
 } from "@packages/ui/components/popover";
 import { cn } from "@packages/ui/lib/utils";
+import { useGithubActions } from "@packages/ui/rpc/github-actions";
 import { useGithubWrite } from "@packages/ui/rpc/github-write";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Option } from "effect";
@@ -58,6 +59,21 @@ export function AssigneesCombobox({
 		[client, ownerLogin, name],
 	);
 	const assigneesResult = useAtomValue(assigneesAtom);
+	const githubActions = useGithubActions();
+	const [searchQuery, setSearchQuery] = useState("");
+	const normalizedSearchQuery = searchQuery.trim();
+	const remoteAssigneesAtom = useMemo(
+		() =>
+			githubActions.listRepoAssignees.callAsQuery({
+				ownerLogin,
+				name,
+				query:
+					normalizedSearchQuery.length > 0 ? normalizedSearchQuery : undefined,
+			}),
+		[githubActions, ownerLogin, name, normalizedSearchQuery],
+	);
+	const remoteAssigneesResult = useAtomValue(remoteAssigneesAtom);
+	const isLoadingRemoteAssignees = Result.isWaiting(remoteAssigneesResult);
 
 	const writeClient = useGithubWrite();
 	const [updateResult, updateAssignees] = useAtom(
@@ -79,6 +95,15 @@ export function AssigneesCombobox({
 			}
 		}
 
+		if (Result.isSuccess(remoteAssigneesResult)) {
+			const valueOpt = Result.value(remoteAssigneesResult);
+			if (Option.isSome(valueOpt)) {
+				for (const a of valueOpt.value) {
+					merged.set(a.login, a);
+				}
+			}
+		}
+
 		// Ensure current assignees are always present
 		for (const a of currentAssignees) {
 			if (!merged.has(a.login)) {
@@ -87,7 +112,7 @@ export function AssigneesCombobox({
 		}
 
 		return [...merged.values()];
-	}, [assigneesResult, currentAssignees]);
+	}, [assigneesResult, remoteAssigneesResult, currentAssignees]);
 
 	const currentLogins = new Set(currentAssignees.map((a) => a.login));
 
@@ -148,7 +173,11 @@ export function AssigneesCombobox({
 				</PopoverTrigger>
 				<PopoverContent className="w-56 p-0" align="start">
 					<Command>
-						<CommandInput placeholder="Search users..." />
+						<CommandInput
+							placeholder="Search GitHub users..."
+							value={searchQuery}
+							onValueChange={setSearchQuery}
+						/>
 						<CommandList>
 							<CommandEmpty>No users found.</CommandEmpty>
 							<CommandGroup>
@@ -174,6 +203,16 @@ export function AssigneesCombobox({
 								))}
 							</CommandGroup>
 						</CommandList>
+						{isLoadingRemoteAssignees && (
+							<p className="px-2 pb-2 text-[10px] text-muted-foreground">
+								Loading users from GitHub...
+							</p>
+						)}
+						{Result.isFailure(remoteAssigneesResult) && (
+							<p className="px-2 pb-2 text-[10px] text-muted-foreground">
+								Could not load additional users from GitHub.
+							</p>
+						)}
 					</Command>
 				</PopoverContent>
 			</Popover>

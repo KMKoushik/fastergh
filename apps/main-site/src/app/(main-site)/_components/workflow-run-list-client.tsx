@@ -7,12 +7,12 @@ import {
 } from "@packages/ui/components/avatar";
 import { Button } from "@packages/ui/components/button";
 import { Link } from "@packages/ui/components/link";
-import { usePaginatedAtom } from "@packages/ui/hooks/use-paginated-atom";
+import { useInfinitePaginationWithInitial } from "@packages/ui/hooks/use-paginated-atom";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Loader2 } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 const PAGE_SIZE = 30;
 
@@ -98,23 +98,12 @@ function WorkflowRunListLoaded({
 			}),
 		[client, owner, name],
 	);
-	const pagination = usePaginatedAtom(paginatedAtom);
-	const requestedInitialPageRef = useRef(false);
+	const pagination = useInfinitePaginationWithInitial(
+		paginatedAtom,
+		initialData,
+	);
 
-	useEffect(() => {
-		if (!pagination.isInitial) return;
-		if (requestedInitialPageRef.current) return;
-		requestedInitialPageRef.current = true;
-		if (pagination.hasMore) {
-			pagination.loadMore();
-		}
-	}, [pagination.hasMore, pagination.isInitial, pagination.loadMore]);
-
-	const allRuns =
-		pagination.isInitial ||
-		(pagination.isLoading && pagination.items.length === 0)
-			? initialData
-			: pagination.items;
+	const allRuns = pagination.items;
 	const isLoading = pagination.isLoading;
 
 	const runs = useMemo(() => {
@@ -205,6 +194,8 @@ function WorkflowRunListLoaded({
 					</div>
 				</Link>
 			))}
+
+			<div ref={pagination.sentinelRef} className="h-1" />
 
 			<div className="py-2">
 				{pagination.hasMore && (
