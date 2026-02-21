@@ -1,5 +1,6 @@
 import { createRpcFactory, makeRpcModule } from "@packages/confect/rpc";
 import { Effect, Option, Schema } from "effect";
+import { internal } from "../_generated/api";
 import { ConfectMutationCtx, ConfectQueryCtx, confectSchema } from "../confect";
 import {
 	checkRunsByRepo,
@@ -48,6 +49,25 @@ const syncJobStatusDef = factory.query({
 			lastError: Schema.NullOr(Schema.String),
 			jobType: Schema.String,
 			triggerReason: Schema.String,
+		}),
+	),
+});
+
+const listDeadLettersDef = factory.internalQuery({
+	payload: {
+		source: Schema.optionalWith(
+			Schema.Literal("webhook", "bootstrap", "replay"),
+			{ default: () => "bootstrap" as const },
+		),
+		limit: Schema.optionalWith(Schema.Number, { default: () => 50 }),
+	},
+	success: Schema.Array(
+		Schema.Struct({
+			deliveryId: Schema.String,
+			reason: Schema.String,
+			payloadJson: Schema.String,
+			createdAt: Schema.Number,
+			source: Schema.String,
 		}),
 	),
 });
@@ -222,6 +242,24 @@ syncJobStatusDef.implement(() =>
 			lastError: j.lastError,
 			jobType: j.jobType,
 			triggerReason: j.triggerReason,
+		}));
+	}),
+);
+
+listDeadLettersDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectQueryCtx;
+		const items = yield* ctx.db
+			.query("github_dead_letters")
+			.withIndex("by_createdAt")
+			.order("desc")
+			.take(args.limit);
+		return items.map((d) => ({
+			deliveryId: d.deliveryId,
+			reason: d.reason,
+			payloadJson: d.payloadJson,
+			createdAt: d.createdAt,
+			source: d.source,
 		}));
 	}),
 );
@@ -421,6 +459,149 @@ patchRepoConnectedUserDef.implement((args) =>
 );
 
 // ---------------------------------------------------------------------------
+// Stuck bootstrap detection and recovery
+// ---------------------------------------------------------------------------
+
+const StuckBootstrapInfo = Schema.Struct({
+	lockKey: Schema.String,
+	repositoryId: Schema.NullOr(Schema.Number),
+	state: Schema.String,
+	currentStep: Schema.NullOr(Schema.String),
+	lastError: Schema.NullOr(Schema.String),
+	updatedAt: Schema.Number,
+	stuckForMs: Schema.Number,
+});
+
+/**
+ * Find sync jobs stuck in "running" state for longer than the threshold.
+ * Default threshold: 30 minutes.
+ */
+const listStuckBootstrapsDef = factory.internalQuery({
+	payload: {
+		/** Stuck threshold in milliseconds. Defaults to 30 minutes. */
+		thresholdMs: Schema.optional(Schema.Number),
+	},
+	success: Schema.Array(StuckBootstrapInfo),
+});
+
+listStuckBootstrapsDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectQueryCtx;
+		const now = Date.now();
+		const threshold = args.thresholdMs ?? 30 * 60 * 1000; // 30 min default
+		const cutoff = now - threshold;
+
+		const runningJobs = yield* ctx.db
+			.query("github_sync_jobs")
+			.withIndex("by_state_and_nextRunAt", (q) => q.eq("state", "running"))
+			.collect();
+
+		return runningJobs
+			.filter((job) => job.updatedAt < cutoff)
+			.map((job) => ({
+				lockKey: job.lockKey,
+				repositoryId: job.repositoryId,
+				state: job.state,
+				currentStep: job.currentStep ?? null,
+				lastError: job.lastError,
+				updatedAt: job.updatedAt,
+				stuckForMs: now - job.updatedAt,
+			}));
+	}),
+);
+
+/**
+ * Mark stuck bootstraps as failed and optionally restart them.
+ *
+ * For each stuck job:
+ * 1. Marks the sync job as "failed" with an explanatory error.
+ * 2. If `restart` is true, schedules `startBootstrap` to re-run the
+ *    workflow from scratch.
+ */
+const restartStuckBootstrapsDef = factory.internalMutation({
+	payload: {
+		/** Stuck threshold in milliseconds. Defaults to 30 minutes. */
+		thresholdMs: Schema.optional(Schema.Number),
+		/** Whether to restart the jobs after marking them failed. Defaults to true. */
+		restart: Schema.optional(Schema.Boolean),
+	},
+	success: Schema.Struct({
+		marked: Schema.Number,
+		restarted: Schema.Number,
+	}),
+});
+
+restartStuckBootstrapsDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectMutationCtx;
+		const now = Date.now();
+		const threshold = args.thresholdMs ?? 30 * 60 * 1000;
+		const cutoff = now - threshold;
+		const shouldRestart = args.restart ?? true;
+
+		const runningJobs = yield* ctx.db
+			.query("github_sync_jobs")
+			.withIndex("by_state_and_nextRunAt", (q) => q.eq("state", "running"))
+			.collect();
+
+		const stuckJobs = runningJobs.filter((job) => job.updatedAt < cutoff);
+
+		let marked = 0;
+		let restarted = 0;
+
+		for (const job of stuckJobs) {
+			const stuckMinutes = Math.round((now - job.updatedAt) / 60_000);
+
+			yield* ctx.db.patch(job._id, {
+				state: "failed",
+				lastError: `Marked as stuck by admin (no update for ${stuckMinutes}m)`,
+				updatedAt: now,
+			});
+			marked++;
+
+			const repoId = job.repositoryId;
+			if (shouldRestart && repoId !== null) {
+				// Look up the repo to get fullName and connectedByUserId
+				const repo = yield* ctx.db
+					.query("github_repositories")
+					.withIndex("by_githubRepoId", (q) => q.eq("githubRepoId", repoId))
+					.first();
+
+				if (Option.isSome(repo)) {
+					// Reset the job state so the new workflow can take over
+					yield* ctx.db.patch(job._id, {
+						state: "pending",
+						lastError: null,
+						attemptCount: 0,
+						currentStep: null,
+						completedSteps: [],
+						itemsFetched: 0,
+						updatedAt: now,
+					});
+
+					yield* Effect.promise(() =>
+						ctx.rawCtx.scheduler.runAfter(
+							0,
+							internal.rpc.bootstrapWorkflow.startBootstrap,
+							{
+								repositoryId: repo.value.githubRepoId,
+								fullName: repo.value.fullName,
+								lockKey: job.lockKey,
+								connectedByUserId: repo.value.connectedByUserId ?? null,
+								installationId: repo.value.installationId,
+							},
+						),
+					);
+					restarted++;
+				}
+			}
+		}
+
+		return { marked, restarted };
+	}),
+);
+
+// ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
 
@@ -433,6 +614,9 @@ const adminModule = makeRpcModule(
 		queueHealth: queueHealthDef,
 		systemStatus: systemStatusDef,
 		patchRepoConnectedUser: patchRepoConnectedUserDef,
+		listStuckBootstraps: listStuckBootstrapsDef,
+		restartStuckBootstraps: restartStuckBootstrapsDef,
+		listDeadLetters: listDeadLettersDef,
 	},
 	{ middlewares: DatabaseRpcModuleMiddlewares },
 );
@@ -445,6 +629,9 @@ export const {
 	queueHealth,
 	systemStatus,
 	patchRepoConnectedUser,
+	listStuckBootstraps,
+	restartStuckBootstraps,
+	listDeadLetters,
 } = adminModule.handlers;
 export { adminModule };
 export type AdminModule = typeof adminModule;

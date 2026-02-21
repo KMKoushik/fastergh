@@ -4718,7 +4718,8 @@
             "type": "object",
             "properties": {
               "label": {
-                "type": "string"
+                "type": "string",
+                "nullable": true
               },
               "ref": {
                 "type": "string"
@@ -4746,7 +4747,8 @@
             "type": "object",
             "properties": {
               "label": {
-                "type": "string"
+                "type": "string",
+                "nullable": true
               },
               "ref": {
                 "type": "string"
@@ -9598,11 +9600,13 @@
           },
           "commit_title": {
             "type": "string",
-            "description": "Title for the merge commit message."
+            "description": "Title for the merge commit message.",
+            "nullable": true
           },
           "commit_message": {
             "type": "string",
-            "description": "Commit message for the merge commit."
+            "description": "Commit message for the merge commit.",
+            "nullable": true
           }
         },
         "required": [

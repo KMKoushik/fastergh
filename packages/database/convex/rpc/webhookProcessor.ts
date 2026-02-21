@@ -1876,6 +1876,7 @@ processWebhookEventDef.implement((args) =>
 							reason: `Exhausted ${MAX_ATTEMPTS} attempts. Last error: ${String(error)}`,
 							payloadJson: event.payloadJson,
 							createdAt: Date.now(),
+							source: "webhook",
 						});
 						// Sync aggregate before deleting from table
 						yield* syncWebhookDelete(ctx.rawCtx, event);
@@ -1975,6 +1976,7 @@ processAllPendingDef.implement(() =>
 								reason: `Exhausted ${MAX_ATTEMPTS} attempts. Last error: ${String(error)}`,
 								payloadJson: event.payloadJson,
 								createdAt: Date.now(),
+								source: "webhook",
 							});
 							yield* syncWebhookDelete(ctx.rawCtx, event);
 							yield* ctx.db.delete(event._id);

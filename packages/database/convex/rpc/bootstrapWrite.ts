@@ -639,25 +639,33 @@ updateSyncJobStateDef.implement((args) =>
 // here so one bad item doesn't crash the entire step.
 // ---------------------------------------------------------------------------
 
-const deadLetterDef = factory.internalMutation({
-	payload: {
-		deliveryId: Schema.String,
-		reason: Schema.String,
-		payloadJson: Schema.String,
-	},
-	success: Schema.Struct({ inserted: Schema.Boolean }),
+const DeadLetterItem = Schema.Struct({
+	deliveryId: Schema.String,
+	reason: Schema.String,
+	payloadJson: Schema.String,
 });
 
-deadLetterDef.implement((args) =>
+const deadLetterBatchDef = factory.internalMutation({
+	payload: {
+		items: Schema.Array(DeadLetterItem),
+	},
+	success: Schema.Struct({ inserted: Schema.Number }),
+});
+
+deadLetterBatchDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectMutationCtx;
-		yield* ctx.db.insert("github_dead_letters", {
-			deliveryId: args.deliveryId,
-			reason: args.reason,
-			payloadJson: args.payloadJson,
-			createdAt: Date.now(),
-		});
-		return { inserted: true };
+		const now = Date.now();
+		for (const item of args.items) {
+			yield* ctx.db.insert("github_dead_letters", {
+				deliveryId: item.deliveryId,
+				reason: item.reason,
+				payloadJson: item.payloadJson,
+				createdAt: now,
+				source: "bootstrap",
+			});
+		}
+		return { inserted: args.items.length };
 	}),
 );
 
@@ -678,7 +686,7 @@ const bootstrapWriteModule = makeRpcModule(
 		upsertWorkflowJobs: upsertWorkflowJobsDef,
 		upsertUsers: upsertUsersDef,
 		updateSyncJobState: updateSyncJobStateDef,
-		deadLetter: deadLetterDef,
+		deadLetterBatch: deadLetterBatchDef,
 	},
 	{ middlewares: DatabaseRpcModuleMiddlewares },
 );
@@ -693,7 +701,7 @@ export const {
 	upsertWorkflowJobs,
 	upsertUsers,
 	updateSyncJobState,
-	deadLetter,
+	deadLetterBatch,
 } = bootstrapWriteModule.handlers;
 export { bootstrapWriteModule };
 export type BootstrapWriteModule = typeof bootstrapWriteModule;

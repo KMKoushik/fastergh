@@ -284,13 +284,13 @@ export const fetchPullRequestsChunk = internalAction({
 				console.warn(
 					`[fetchPullRequestsChunk] ${args.fullName} page ${currentPage}: skipped ${skipped.length} items due to parse errors`,
 				);
-				for (const item of skipped) {
-					await ctx.runMutation(internal.rpc.bootstrapWrite.deadLetter, {
+				await ctx.runMutation(internal.rpc.bootstrapWrite.deadLetterBatch, {
+					items: skipped.map((item) => ({
 						deliveryId: `bootstrap-pr:${args.repositoryId}:page${currentPage}:idx${item.index}`,
 						reason: item.error,
 						payloadJson: item.raw,
-					});
-				}
+					})),
+				});
 			}
 
 			// Transform the page
@@ -403,13 +403,13 @@ export const fetchIssuesChunk = internalAction({
 				console.warn(
 					`[fetchIssuesChunk] ${args.fullName} page ${currentPage}: skipped ${skipped.length} items due to parse errors`,
 				);
-				for (const item of skipped) {
-					await ctx.runMutation(internal.rpc.bootstrapWrite.deadLetter, {
+				await ctx.runMutation(internal.rpc.bootstrapWrite.deadLetterBatch, {
+					items: skipped.map((item) => ({
 						deliveryId: `bootstrap-issue:${args.repositoryId}:page${currentPage}:idx${item.index}`,
 						reason: item.error,
 						payloadJson: item.raw,
-					});
-				}
+					})),
+				});
 			}
 
 			// GitHub's issues API includes PRs — filter them out, then transform
@@ -494,7 +494,15 @@ export const fetchCommits = internalAction({
 				const gh = yield* GitHubApiClient;
 				return yield* gh.client
 					.reposListCommits(owner, repo, { per_page: 100 })
-					.pipe(Effect.orDie);
+					.pipe(
+						// GitHub returns 409 for empty repos ("Git Repository is empty.")
+						// Treat as zero commits rather than crashing.
+						Effect.catchIf(
+							(e) => e.response.status === 409,
+							() => Effect.succeed([]),
+						),
+						Effect.orDie,
+					);
 			}),
 		);
 

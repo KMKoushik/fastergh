@@ -2485,12 +2485,14 @@ export class AutoMerge extends S.Class<AutoMerge>("AutoMerge")({
 	merge_method: AutoMergeMergeMethod,
 	/**
 	 * Title for the merge commit message.
+	 * GitHub returns null when the user hasn't set a custom title.
 	 */
-	commit_title: S.String,
+	commit_title: S.NullOr(S.String),
 	/**
 	 * Commit message for the merge commit.
+	 * GitHub returns null when the user hasn't set a custom message.
 	 */
-	commit_message: S.String,
+	commit_message: S.NullOr(S.String),
 }) {}
 
 /**
@@ -2540,14 +2542,14 @@ export class PullRequestSimple extends S.Class<PullRequestSimple>(
 	requested_reviewers: S.optionalWith(S.Array(SimpleUser), { nullable: true }),
 	requested_teams: S.optionalWith(S.Array(Team), { nullable: true }),
 	head: S.Struct({
-		label: S.String,
+		label: S.NullOr(S.String),
 		ref: S.String,
 		repo: S.NullOr(Repository),
 		sha: S.String,
 		user: S.NullOr(NullableSimpleUser),
 	}),
 	base: S.Struct({
-		label: S.String,
+		label: S.NullOr(S.String),
 		ref: S.String,
 		repo: S.NullOr(Repository),
 		sha: S.String,

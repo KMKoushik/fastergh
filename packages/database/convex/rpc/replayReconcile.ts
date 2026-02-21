@@ -172,6 +172,7 @@ moveToDeadLetterDef.implement((args) =>
 			reason: args.reason,
 			payloadJson: event.value.payloadJson,
 			createdAt: Date.now(),
+			source: "replay",
 		});
 
 		// Delete from raw events

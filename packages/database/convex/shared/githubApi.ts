@@ -448,7 +448,7 @@ export const decodeLenientArray = <A, I>(
 				error: errorMsg,
 				raw:
 					rawStr.length > 2000
-						? rawStr.slice(0, 2000) + "...(truncated)"
+						? `${rawStr.slice(0, 2000)}...(truncated)`
 						: rawStr,
 			});
 		}
@@ -461,6 +461,11 @@ export const decodeLenientArray = <A, I>(
  * Fetch a JSON array endpoint and decode each item leniently.
  * Uses the raw httpClient to bypass the generated client's strict schema decoding.
  * Returns successfully parsed items + skipped items for dead-lettering.
+ *
+ * - Status checking uses `HttpClientResponse.matchStatus` (same pattern as the
+ *   generated client).
+ * - JSON parsing uses `response.json` which wraps `JSON.parse` in an Effect
+ *   with a proper `ResponseError` on failure.
  */
 export const fetchArrayLenient = <A, I>(
 	schema: S.Schema<A, I>,
@@ -476,20 +481,31 @@ export const fetchArrayLenient = <A, I>(
 	Effect.gen(function* () {
 		const gh = yield* GitHubApiClient;
 		const response = yield* gh.httpClient.execute(request);
-		if (response.status < 200 || response.status >= 300) {
-			return yield* new HttpClientError.ResponseError({
-				request,
-				response,
-				reason: "StatusCode",
-				description: `GitHub API returned ${response.status}`,
-			});
-		}
-		const body = yield* response.text;
-		const rawArray = JSON.parse(body);
-		if (!Array.isArray(rawArray)) {
+
+		const body = yield* HttpClientResponse.matchStatus(response, {
+			"2xx": (r) => r.json,
+			orElse: (r) =>
+				Effect.flatMap(
+					Effect.orElseSucceed(r.json, () => "Unexpected status code"),
+					(description) =>
+						Effect.fail(
+							new HttpClientError.ResponseError({
+								request,
+								response: r,
+								reason: "StatusCode",
+								description:
+									typeof description === "string"
+										? description
+										: JSON.stringify(description),
+							}),
+						),
+				),
+		});
+
+		if (!Array.isArray(body)) {
 			return { items: [], skipped: [] };
 		}
-		return decodeLenientArray(rawArray, schema);
+		return decodeLenientArray(body, schema);
 	});
 
 export type { GitHubClient, IGitHubApiClient };

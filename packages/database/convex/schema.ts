@@ -71,6 +71,11 @@ const GitHubDeadLetterSchema = Schema.Struct({
 	reason: Schema.String,
 	payloadJson: Schema.String,
 	createdAt: Schema.Number,
+	/** Discriminates where the dead letter originated from. */
+	source: Schema.optionalWith(
+		Schema.Literal("webhook", "bootstrap", "replay"),
+		{ default: () => "webhook" },
+	),
 });
 
 // ============================================================
@@ -533,10 +538,9 @@ export const confectSchema = defineSchema({
 			"receivedAt",
 		]),
 
-	github_dead_letters: defineTable(GitHubDeadLetterSchema).index(
-		"by_createdAt",
-		["createdAt"],
-	),
+	github_dead_letters: defineTable(GitHubDeadLetterSchema)
+		.index("by_createdAt", ["createdAt"])
+		.index("by_source_and_createdAt", ["source", "createdAt"]),
 
 	// B) Normalized Domain
 	github_users: defineTable(GitHubUserSchema)

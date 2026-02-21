@@ -168,8 +168,8 @@ const schemaOverrides: Record<
 	(schema: Record<string, unknown>) => void
 > = {
 	/**
-	 * pull-request-simple → labels[].description is nullable in practice.
-	 * GitHub labels created without a description have `"description": null`.
+	 * pull-request-simple → Several fields are nullable in practice despite
+	 * the spec marking them as non-nullable.
 	 */
 	"pull-request-simple": (schema) => {
 		const props = schema.properties as Record<string, unknown>;
@@ -182,19 +182,42 @@ const schemaOverrides: Record<
 			labelProps.description = { type: "string", nullable: true };
 		}
 
-		// head.repo and base.repo are nullable (deleted fork PRs)
+		// head.repo, base.repo, head.label, base.label are nullable (deleted fork PRs)
 		for (const field of ["head", "base"]) {
 			const struct = props?.[field] as Record<string, unknown> | undefined;
 			const structProps = struct?.properties as
 				| Record<string, unknown>
 				| undefined;
+			if (!structProps) continue;
+
+			// repo is nullable
 			if (
-				structProps?.repo &&
+				structProps.repo &&
 				typeof structProps.repo === "object" &&
 				!("nullable" in (structProps.repo as Record<string, unknown>))
 			) {
 				const existing = structProps.repo as Record<string, unknown>;
 				existing.nullable = true;
+			}
+
+			// label is nullable when the source fork is deleted
+			if (structProps.label && typeof structProps.label === "object") {
+				(structProps.label as Record<string, unknown>).nullable = true;
+			}
+		}
+	},
+
+	/**
+	 * auto-merge → commit_title and commit_message are nullable in practice.
+	 * GitHub returns null when the user hasn't set custom merge commit text.
+	 */
+	"auto-merge": (schema) => {
+		const props = schema.properties as Record<string, unknown> | undefined;
+		if (!props) return;
+
+		for (const field of ["commit_title", "commit_message"]) {
+			if (props[field] && typeof props[field] === "object") {
+				(props[field] as Record<string, unknown>).nullable = true;
 			}
 		}
 	},
