@@ -16,7 +16,10 @@ import {
 	reviewsByPrNumber,
 } from "../shared/aggregates";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
-import { RepoPermissionContext, RepoPullByNameMiddleware } from "./security";
+import {
+	ReadGitHubRepoByNameMiddleware,
+	ReadGitHubRepoPermission,
+} from "./security";
 
 const factory = createRpcFactory({ schema: confectSchema });
 
@@ -67,7 +70,7 @@ const getRepoOverviewDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get pull request list for a repository.
@@ -100,7 +103,7 @@ const listPullRequestsDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get issue list for a repository.
@@ -129,7 +132,7 @@ const listIssuesDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get activity feed for a repository.
@@ -153,7 +156,7 @@ const listActivityDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get files changed in a pull request (for diff view).
@@ -191,7 +194,7 @@ const listPrFilesDef = factory
 			),
 		}),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Request on-demand PR file sync.
@@ -214,7 +217,7 @@ const requestPrFileSyncDef = factory
 			scheduled: Schema.Boolean,
 		}),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 // ---------------------------------------------------------------------------
 // Paginated list endpoint definitions
@@ -277,7 +280,7 @@ const listPullRequestsPaginatedDef = factory
 		},
 		success: PaginationResultSchema(PrListItem),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Paginated issue list with optional state filter.
@@ -292,7 +295,7 @@ const listIssuesPaginatedDef = factory
 		},
 		success: PaginationResultSchema(IssueListItem),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Paginated activity feed.
@@ -306,7 +309,7 @@ const listActivityPaginatedDef = factory
 		},
 		success: PaginationResultSchema(ActivityListItem),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get workflow run list for a repository.
@@ -336,7 +339,7 @@ const listWorkflowRunsDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 const WorkflowRunListItem = Schema.Struct({
 	githubRunId: Schema.Number,
@@ -367,7 +370,7 @@ const listWorkflowRunsPaginatedDef = factory
 		},
 		success: PaginationResultSchema(WorkflowRunListItem),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Search issues and PRs by title within a repository.
@@ -397,7 +400,7 @@ const searchIssuesAndPrsDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 const WorkflowJobSchema = Schema.Struct({
 	githubJobId: Schema.Number,
@@ -442,7 +445,7 @@ const getWorkflowRunDetailDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 // -- Shared sub-schemas for detail views ------------------------------------
 
@@ -541,7 +544,7 @@ const getIssueDetailDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get full pull request detail including body, comments, reviews, and check runs.
@@ -592,7 +595,7 @@ const getPullRequestDetailDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get bootstrap sync progress for a repository.
@@ -619,7 +622,7 @@ const getSyncProgressDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 // ---------------------------------------------------------------------------
 // Home dashboard — cross-repo aggregate
@@ -1094,12 +1097,16 @@ listReposDef.implement(() =>
 getRepoOverviewDef.implement((_args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
-		const permissionContext = yield* RepoPermissionContext;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return null;
+		}
+		const repository = permission.repository;
 
 		const repoOpt = yield* ctx.db
 			.query("github_repositories")
 			.withIndex("by_githubRepoId", (q) =>
-				q.eq("githubRepoId", permissionContext.repositoryId),
+				q.eq("githubRepoId", repository.repositoryId),
 			)
 			.first();
 
@@ -1126,10 +1133,13 @@ getSyncProgressDef.implement((_args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
 		const raw = ctx.rawCtx;
-		const permissionContext = yield* RepoPermissionContext;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return null;
+		}
 
-		const repositoryId = permissionContext.repositoryId;
-		const installationId = permissionContext.installationId;
+		const repositoryId = permission.repository.repositoryId;
+		const installationId = permission.repository.installationId;
 		if (installationId <= 0) return null;
 
 		// Find the bootstrap sync job for this repository
@@ -1297,6 +1307,7 @@ const enrichPr = (pr: {
 listPullRequestsDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -1359,6 +1370,7 @@ const enrichIssue = (issue: {
 listIssuesDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -1390,8 +1402,12 @@ listIssuesDef.implement((args) =>
 listActivityDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
-		const permissionContext = yield* RepoPermissionContext;
-		const repositoryId = permissionContext.repositoryId;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return [];
+		}
+
+		const repositoryId = permission.repository.repositoryId;
 		const limit = args.limit ?? 50;
 		const activities = yield* ctx.db
 			.query("view_activity_feed")
@@ -1418,6 +1434,7 @@ listActivityDef.implement((args) =>
 searchIssuesAndPrsDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
 
 		const ctx = yield* ConfectQueryCtx;
 		const maxResults = args.limit ?? 20;
@@ -2428,13 +2445,18 @@ const hasPullPermission = (permission: {
 
 const findRepo = (_ownerLogin: string, _name: string) =>
 	Effect.gen(function* () {
-		const permissionContext = yield* RepoPermissionContext;
-		return permissionContext.repositoryId;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return null;
+		}
+
+		return permission.repository.repositoryId;
 	});
 
 getIssueDetailDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return null;
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -2518,6 +2540,7 @@ getIssueDetailDef.implement((args) =>
 getPullRequestDetailDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return null;
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -2732,6 +2755,7 @@ getPullRequestDetailDef.implement((args) =>
 listPrFilesDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return { headSha: null, files: [] };
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -2806,10 +2830,14 @@ listPrFilesDef.implement((args) =>
 requestPrFileSyncDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectMutationCtx;
-		const permissionContext = yield* RepoPermissionContext;
-		const repositoryId = permissionContext.repositoryId;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return { scheduled: false };
+		}
 
-		const installationId = permissionContext.installationId;
+		const repositoryId = permission.repository.repositoryId;
+
+		const installationId = permission.repository.installationId;
 		if (installationId <= 0) return { scheduled: false };
 
 		// 2. Find the PR to get its headSha
@@ -2861,6 +2889,13 @@ requestPrFileSyncDef.implement((args) =>
 listPullRequestsPaginatedDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: Cursor.make(""),
+			};
+		}
 
 		const ctx = yield* ConfectQueryCtx;
 		const paginationOpts = {
@@ -2901,6 +2936,13 @@ listPullRequestsPaginatedDef.implement((args) =>
 listIssuesPaginatedDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: Cursor.make(""),
+			};
+		}
 
 		const ctx = yield* ConfectQueryCtx;
 		const paginationOpts = {
@@ -2941,6 +2983,13 @@ listIssuesPaginatedDef.implement((args) =>
 listActivityPaginatedDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: Cursor.make(""),
+			};
+		}
 
 		const ctx = yield* ConfectQueryCtx;
 		const paginationOpts = {
@@ -3037,6 +3086,7 @@ const enrichWorkflowRun = (run: {
 listWorkflowRunsDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -3057,6 +3107,13 @@ listWorkflowRunsDef.implement((args) =>
 listWorkflowRunsPaginatedDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: Cursor.make(""),
+			};
+		}
 
 		const ctx = yield* ConfectQueryCtx;
 		const paginationOpts = {
@@ -3087,6 +3144,7 @@ listWorkflowRunsPaginatedDef.implement((args) =>
 getWorkflowRunDetailDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return null;
 
 		const ctx = yield* ConfectQueryCtx;
 
@@ -3154,11 +3212,12 @@ const listRepoLabelsDef = factory
 		},
 		success: Schema.Array(Schema.String),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 listRepoLabelsDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
 
 		const ctx = yield* ConfectQueryCtx;
 		const labelSet = new Set<string>();
@@ -3214,11 +3273,12 @@ const listRepoAssigneesDef = factory
 		},
 		success: Schema.Array(RepoCollaboratorSchema),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 listRepoAssigneesDef.implement((args) =>
 	Effect.gen(function* () {
 		const repositoryId = yield* findRepo(args.ownerLogin, args.name);
+		if (repositoryId === null) return [];
 
 		const ctx = yield* ConfectQueryCtx;
 

@@ -84,9 +84,82 @@ type IGitHubApiClient = Readonly<{
 
 	/**
 	 * The underlying `@effect/platform` HttpClient with auth headers baked in.
-	 * Useful for endpoints that need custom Accept headers (e.g. diff format).
+	 * Useful for GraphQL or other endpoints not covered by the generated client.
 	 */
 	httpClient: HttpClient.HttpClient;
+
+	// -----------------------------------------------------------------
+	// Non-JSON helpers — endpoints that return raw text or empty bodies
+	// -----------------------------------------------------------------
+
+	/**
+	 * Fetch a pull request as a raw unified diff.
+	 * Returns `null` when the PR is not found (404).
+	 */
+	pullsGetDiff: (
+		owner: string,
+		repo: string,
+		pullNumber: string,
+	) => Effect.Effect<string | null, HttpClientError.HttpClientError>;
+
+	/**
+	 * Download the logs for a specific workflow job.
+	 * Returns the raw log text, or `null` on 404.
+	 */
+	actionsDownloadJobLogs: (
+		owner: string,
+		repo: string,
+		jobId: string,
+	) => Effect.Effect<string | null, HttpClientError.HttpClientError>;
+
+	/**
+	 * Re-run an entire workflow run. Resolves with `true` on 201/202/204.
+	 */
+	actionsRerunWorkflow: (
+		owner: string,
+		repo: string,
+		runId: string,
+	) => Effect.Effect<
+		{ accepted: boolean },
+		GitHubApiError | HttpClientError.HttpClientError
+	>;
+
+	/**
+	 * Re-run only the failed jobs of a workflow run.
+	 */
+	actionsRerunFailedJobs: (
+		owner: string,
+		repo: string,
+		runId: string,
+	) => Effect.Effect<
+		{ accepted: boolean },
+		GitHubApiError | HttpClientError.HttpClientError
+	>;
+
+	/**
+	 * Cancel a workflow run.
+	 */
+	actionsCancelWorkflowRun: (
+		owner: string,
+		repo: string,
+		runId: string,
+	) => Effect.Effect<
+		{ accepted: boolean },
+		GitHubApiError | HttpClientError.HttpClientError
+	>;
+
+	/**
+	 * Dispatch a workflow (create a `workflow_dispatch` event).
+	 */
+	actionsDispatchWorkflow: (
+		owner: string,
+		repo: string,
+		workflowId: string,
+		ref: string,
+	) => Effect.Effect<
+		{ accepted: boolean },
+		GitHubApiError | HttpClientError.HttpClientError
+	>;
 }>;
 
 // ---------------------------------------------------------------------------
@@ -179,10 +252,132 @@ const makeAuthedHttpClient = (token: string): HttpClient.HttpClient =>
 		},
 	);
 
+// ---------------------------------------------------------------------------
+// Non-JSON helper implementations
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute a request that returns raw text. Returns `null` on 404.
+ * Fails with `GitHubApiError` on non-2xx responses.
+ */
+const executeTextRequest = (
+	client: HttpClient.HttpClient,
+	request: HttpClientRequest.HttpClientRequest,
+): Effect.Effect<string | null, HttpClientError.HttpClientError> =>
+	Effect.gen(function* () {
+		const response = yield* client.execute(request);
+		if (response.status === 404) return null;
+		if (response.status < 200 || response.status >= 300) {
+			return yield* new HttpClientError.ResponseError({
+				request,
+				response,
+				reason: "StatusCode",
+				description: `GitHub API returned ${response.status}`,
+			});
+		}
+		return yield* response.text;
+	});
+
+/**
+ * Execute a POST that expects a 201/202/204 "accepted" response with no body.
+ */
+const executeAcceptedRequest = (
+	client: HttpClient.HttpClient,
+	request: HttpClientRequest.HttpClientRequest,
+): Effect.Effect<
+	{ accepted: boolean },
+	GitHubApiError | HttpClientError.HttpClientError
+> =>
+	Effect.gen(function* () {
+		const response = yield* client.execute(request);
+		if (
+			response.status === 201 ||
+			response.status === 202 ||
+			response.status === 204
+		) {
+			return { accepted: true };
+		}
+
+		const errorBody = yield* Effect.orElseSucceed(response.text, () => "");
+		let message = `GitHub returned ${response.status}`;
+		try {
+			const parsed = JSON.parse(errorBody);
+			if (
+				typeof parsed === "object" &&
+				parsed !== null &&
+				"message" in parsed &&
+				typeof parsed.message === "string"
+			) {
+				message = parsed.message;
+			}
+		} catch {
+			// use default message
+		}
+
+		return yield* new GitHubApiError({
+			status: response.status,
+			message,
+			url: request.url,
+		});
+	});
+
 const makeClient = (token: string): IGitHubApiClient => {
 	const httpClient = makeAuthedHttpClient(token);
 	const typedClient = makeGeneratedClient(httpClient);
-	return { client: typedClient, httpClient };
+	return {
+		client: typedClient,
+		httpClient,
+
+		pullsGetDiff: (owner, repo, pullNumber) =>
+			executeTextRequest(
+				httpClient,
+				HttpClientRequest.setHeader(
+					HttpClientRequest.get(`/repos/${owner}/${repo}/pulls/${pullNumber}`),
+					"accept",
+					"application/vnd.github.diff",
+				),
+			),
+
+		actionsDownloadJobLogs: (owner, repo, jobId) =>
+			executeTextRequest(
+				httpClient,
+				HttpClientRequest.get(
+					`/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`,
+				),
+			),
+
+		actionsRerunWorkflow: (owner, repo, runId) =>
+			executeAcceptedRequest(
+				httpClient,
+				HttpClientRequest.post(
+					`/repos/${owner}/${repo}/actions/runs/${runId}/rerun`,
+				),
+			),
+
+		actionsRerunFailedJobs: (owner, repo, runId) =>
+			executeAcceptedRequest(
+				httpClient,
+				HttpClientRequest.post(
+					`/repos/${owner}/${repo}/actions/runs/${runId}/rerun-failed-jobs`,
+				),
+			),
+
+		actionsCancelWorkflowRun: (owner, repo, runId) =>
+			executeAcceptedRequest(
+				httpClient,
+				HttpClientRequest.post(
+					`/repos/${owner}/${repo}/actions/runs/${runId}/cancel`,
+				),
+			),
+
+		actionsDispatchWorkflow: (owner, repo, workflowId, ref) =>
+			executeAcceptedRequest(
+				httpClient,
+				HttpClientRequest.post(
+					`/repos/${owner}/${repo}/actions/workflows/${workflowId}/dispatches`,
+				).pipe(HttpClientRequest.bodyUnsafeJson({ ref })),
+			),
+	};
 };
 
 export class GitHubApiClient extends Context.Tag("@quickhub/GitHubApiClient")<

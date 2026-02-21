@@ -22,7 +22,10 @@ import { ContentFile } from "../shared/generated_github_client";
 import { GitHubApiClient } from "../shared/githubApi";
 import { getInstallationToken } from "../shared/githubApp";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
-import { RepoPermissionContext, RepoPullByNameMiddleware } from "./security";
+import {
+	ReadGitHubRepoByNameMiddleware,
+	ReadGitHubRepoPermission,
+} from "./security";
 
 const factory = createRpcFactory({ schema: confectSchema });
 
@@ -162,7 +165,7 @@ const fetchTemplatesDef = factory
 		success: Schema.Array(IssueTemplate),
 		error: Schema.Union(NotAuthenticated, RepoNotFound),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Read cached templates for a repo (no GitHub API call).
@@ -175,7 +178,7 @@ const getCachedTemplatesDef = factory
 		},
 		success: Schema.Array(IssueTemplate),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Upsert template cache for a repo.
@@ -195,9 +198,22 @@ const upsertTemplateCacheDef = factory.internalMutation({
 fetchTemplatesDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
-		const permissionContext = yield* RepoPermissionContext;
-		const repositoryId = permissionContext.repositoryId;
-		const installationId = permissionContext.installationId;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			if (permission.reason === "repo_not_found") {
+				return yield* new RepoNotFound({
+					ownerLogin: args.ownerLogin,
+					name: args.name,
+				});
+			}
+
+			return yield* new NotAuthenticated({
+				reason: "Not authorized to access this repository",
+			});
+		}
+
+		const repositoryId = permission.repository.repositoryId;
+		const installationId = permission.repository.installationId;
 
 		if (installationId <= 0) {
 			return yield* new RepoNotFound({
@@ -300,12 +316,16 @@ fetchTemplatesDef.implement((args) =>
 getCachedTemplatesDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
-		const permissionContext = yield* RepoPermissionContext;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return [] satisfies Array<typeof IssueTemplate.Type>;
+		}
+		const repository = permission.repository;
 
 		const cached = yield* ctx.db
 			.query("github_issue_template_cache")
 			.withIndex("by_repositoryId", (q) =>
-				q.eq("repositoryId", permissionContext.repositoryId),
+				q.eq("repositoryId", repository.repositoryId),
 			)
 			.collect();
 

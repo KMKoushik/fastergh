@@ -25,13 +25,10 @@ import {
 } from "../shared/generated_github_client";
 import { GitHubApiClient } from "../shared/githubApi";
 import { getInstallationToken } from "../shared/githubApp";
-import {
-	resolveRepoAccess,
-	verifyRepoPermissionForMutation,
-} from "../shared/permissions";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
 import {
-	RepoPullByNameMiddleware,
+	ReadGitHubRepoByNameMiddleware,
+	ReadGitHubRepoPermission,
 	RequireAuthenticatedMiddleware,
 } from "./security";
 
@@ -224,7 +221,7 @@ const getFileTreeDef = factory
 		}),
 		error: Schema.Union(NotAuthenticated, RepoNotFound),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Get file content for a specific path at a ref.
@@ -241,7 +238,7 @@ const getFileContentDef = factory
 		success: Schema.NullOr(FileContentResult),
 		error: Schema.Union(NotAuthenticated, RepoNotFound),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Internal: upsert tree cache entry.
@@ -312,7 +309,7 @@ const getFileReadStateDef = factory
 		error: Schema.Union(NotAuthenticated, RepoNotFound),
 	})
 	.middleware(RequireAuthenticatedMiddleware)
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Mark a file as read for the current signed-in user.
@@ -330,71 +327,89 @@ const markFileReadDef = factory
 		error: Schema.Union(NotAuthenticated, RepoNotFound),
 	})
 	.middleware(RequireAuthenticatedMiddleware)
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 // ---------------------------------------------------------------------------
 // Helper: resolve readable repo for actions
 // ---------------------------------------------------------------------------
 
 const resolveReadableRepo = (
-	ctx: {
-		auth: ConfectActionCtx["auth"];
-		runQuery: ConfectActionCtx["runQuery"];
-	},
 	ownerLogin: string,
 	name: string,
+	permission: {
+		isAllowed: boolean;
+		repository: {
+			repositoryId: number;
+			installationId: number;
+		} | null;
+		reason:
+			| "allowed"
+			| "repo_not_found"
+			| "not_authenticated"
+			| "insufficient_permission"
+			| "invalid_payload"
+			| "invalid_repo_info";
+	},
 ) =>
 	Effect.gen(function* () {
-		// Get the repo info
-		const repoResult = yield* ctx.runQuery(
-			internal.rpc.codeBrowse.getRepoInfo,
-			{ ownerLogin, name },
-		);
-		const RepoInfoSchema = Schema.Struct({
-			found: Schema.Boolean,
-			repositoryId: Schema.optional(Schema.Number),
-			connectedByUserId: Schema.optional(Schema.NullOr(Schema.String)),
-			installationId: Schema.optional(Schema.Number),
-			isPrivate: Schema.optional(Schema.Boolean),
-		});
-		const repo = Schema.decodeUnknownSync(RepoInfoSchema)(repoResult);
+		if (!permission.isAllowed || permission.repository === null) {
+			if (permission.reason === "repo_not_found") {
+				return yield* new RepoNotFound({ ownerLogin, name });
+			}
 
-		if (!repo.found || repo.repositoryId === undefined) {
-			return yield* new RepoNotFound({ ownerLogin, name });
-		}
-
-		const identity = yield* ctx.auth.getUserIdentity();
-		const requesterUserId = Option.isSome(identity)
-			? identity.value.subject
-			: null;
-
-		const canReadResult = yield* ctx.runQuery(
-			internal.rpc.codeBrowse.hasRepoReadAccess,
-			{
-				repositoryId: repo.repositoryId,
-				isPrivate: repo.isPrivate ?? true,
-				userId: requesterUserId,
-			},
-		);
-		const canRead = Schema.decodeUnknownSync(Schema.Boolean)(canReadResult);
-
-		if (!canRead) {
 			return yield* new NotAuthenticated({
 				reason: "Not authorized to access this repository",
 			});
 		}
 
-		const installationId = repo.installationId ?? 0;
-		if (installationId <= 0) {
+		return {
+			repositoryId: permission.repository.repositoryId,
+			installationId: permission.repository.installationId,
+		};
+	});
+
+const resolveReadableRepoForState = (
+	ownerLogin: string,
+	name: string,
+	permission: {
+		isAllowed: boolean;
+		repository: {
+			repositoryId: number;
+		} | null;
+		reason:
+			| "allowed"
+			| "repo_not_found"
+			| "not_authenticated"
+			| "insufficient_permission"
+			| "invalid_payload"
+			| "invalid_repo_info";
+	},
+) =>
+	Effect.gen(function* () {
+		if (!permission.isAllowed || permission.repository === null) {
+			if (permission.reason === "repo_not_found") {
+				return yield* new RepoNotFound({ ownerLogin, name });
+			}
+
 			return yield* new NotAuthenticated({
-				reason: "Repository is not connected through the GitHub App",
+				reason: "Not authorized to access this repository",
 			});
 		}
 
-		return {
-			repositoryId: repo.repositoryId,
-			installationId,
-		};
+		return permission.repository.repositoryId;
+	});
+
+const ensureInstallationConnected = (
+	ownerLogin: string,
+	name: string,
+	installationId: number,
+) =>
+	Effect.gen(function* () {
+		if (installationId <= 0) {
+			return yield* new RepoNotFound({ ownerLogin, name });
+		}
+
+		return null;
 	});
 
 /**
@@ -534,7 +549,7 @@ getRepoInfoDef.implement((args) =>
 			repositoryId: repo.githubRepoId,
 			connectedByUserId: repo.connectedByUserId ?? null,
 			installationId: repo.installationId,
-			isPrivate: repo.private,
+			isPrivate: repo.visibility === "public" ? false : repo.private,
 		};
 	}),
 );
@@ -556,7 +571,8 @@ getRepoInfoByIdDef.implement((args) =>
 			ownerLogin: repo.value.ownerLogin,
 			name: repo.value.name,
 			installationId: repo.value.installationId,
-			isPrivate: repo.value.private,
+			isPrivate:
+				repo.value.visibility === "public" ? false : repo.value.private,
 		};
 	}),
 );
@@ -632,10 +648,16 @@ hasRepoPermissionDef.implement((args) =>
 getFileTreeDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
+		const permission = yield* ReadGitHubRepoPermission;
 		const { repositoryId, installationId } = yield* resolveReadableRepo(
-			ctx,
 			args.ownerLogin,
 			args.name,
+			permission,
+		);
+		yield* ensureInstallationConnected(
+			args.ownerLogin,
+			args.name,
+			installationId,
 		);
 
 		// Check cache
@@ -730,10 +752,16 @@ getFileTreeDef.implement((args) =>
 getFileContentDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
+		const permission = yield* ReadGitHubRepoPermission;
 		const { repositoryId, installationId } = yield* resolveReadableRepo(
-			ctx,
 			args.ownerLogin,
 			args.name,
+			permission,
+		);
+		yield* ensureInstallationConnected(
+			args.ownerLogin,
+			args.name,
+			installationId,
 		);
 		const token = yield* getInstallationToken(installationId).pipe(
 			Effect.mapError(
@@ -896,27 +924,19 @@ getFileReadStateDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
 		const userId = yield* getActingUserId(ctx);
-		const repo = yield* resolveRepositoryByOwnerAndName(
-			ctx,
+		const permission = yield* ReadGitHubRepoPermission;
+		const repositoryId = yield* resolveReadableRepoForState(
 			args.ownerLogin,
 			args.name,
+			permission,
 		);
-		const access = yield* resolveRepoAccess(
-			repo.repositoryId,
-			repo.isPrivate,
-		).pipe(Effect.either);
-		if (access._tag === "Left") {
-			return yield* new NotAuthenticated({
-				reason: "Not authorized to access this repository",
-			});
-		}
 
 		const states = yield* ctx.db
 			.query("github_file_read_state")
 			.withIndex("by_userId_and_repositoryId_and_treeSha", (q) =>
 				q
 					.eq("userId", userId)
-					.eq("repositoryId", repo.repositoryId)
+					.eq("repositoryId", repositoryId)
 					.eq("treeSha", args.treeSha),
 			)
 			.collect();
@@ -933,28 +953,19 @@ markFileReadDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectMutationCtx;
 		const userId = yield* getActingUserId(ctx);
-		const repo = yield* resolveRepositoryByOwnerAndName(
-			ctx,
+		const permission = yield* ReadGitHubRepoPermission;
+		const repositoryId = yield* resolveReadableRepoForState(
 			args.ownerLogin,
 			args.name,
+			permission,
 		);
-		const permission = yield* verifyRepoPermissionForMutation(
-			userId,
-			repo.repositoryId,
-			"pull",
-		).pipe(Effect.either);
-		if (permission._tag === "Left") {
-			return yield* new NotAuthenticated({
-				reason: "Not authorized to access this repository",
-			});
-		}
 
 		const rows = yield* ctx.db
 			.query("github_file_read_state")
 			.withIndex("by_userId_and_repositoryId_and_treeSha", (q) =>
 				q
 					.eq("userId", userId)
-					.eq("repositoryId", repo.repositoryId)
+					.eq("repositoryId", repositoryId)
 					.eq("treeSha", args.treeSha),
 			)
 			.collect();
@@ -975,7 +986,7 @@ markFileReadDef.implement((args) =>
 
 		yield* ctx.db.insert("github_file_read_state", {
 			userId,
-			repositoryId: repo.repositoryId,
+			repositoryId,
 			treeSha: args.treeSha,
 			path: args.path,
 			fileSha: args.fileSha,

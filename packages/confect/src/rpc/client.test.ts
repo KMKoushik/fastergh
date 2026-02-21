@@ -549,6 +549,33 @@ describe("Server RPC query deduplication", () => {
 		expect(mock.getCallCount()).toBe(2);
 	});
 
+	it("scopes server query cache by auth token when configured", async () => {
+		const mock = createMockHttpLayer();
+
+		const mockApi = {
+			list: guestbookModule.handlers.list,
+		};
+
+		let token = "token-a";
+
+		const serverClient = createServerRpcQuery<typeof guestbookModule>(
+			mockApi as never,
+			{
+				url: "https://test.convex.cloud",
+				layer: mock.layer,
+				getAuthToken: async () => token,
+			},
+		);
+
+		await serverClient.list.queryPromise({});
+		await serverClient.list.queryPromise({});
+		expect(mock.getCallCount()).toBe(1);
+
+		token = "token-b";
+		await serverClient.list.queryPromise({});
+		expect(mock.getCallCount()).toBe(2);
+	});
+
 	it("sequential calls after TTL expiry fire fresh requests", async () => {
 		const mock = createMockHttpLayer();
 

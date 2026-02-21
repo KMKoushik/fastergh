@@ -28,8 +28,8 @@ import { GitHubApiClient, type GitHubClient } from "../shared/githubApi";
 import { lookupGitHubTokenByUserIdConfect } from "../shared/githubToken";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
 import {
-	RepoPermissionContext,
-	RepoPullByIdMiddleware,
+	ReadGitHubRepoByIdMiddleware,
+	ReadGitHubRepoPermission,
 	RepoPushByIdMiddleware,
 	RepoTriageByIdMiddleware,
 } from "./security";
@@ -3135,15 +3135,19 @@ const listWriteOperationsDef = factory
 		},
 		success: Schema.Array(WriteOperation),
 	})
-	.middleware(RepoPullByIdMiddleware);
+	.middleware(ReadGitHubRepoByIdMiddleware);
 
 listWriteOperationsDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
-		const permissionContext = yield* RepoPermissionContext;
-		const repositoryId = permissionContext.repositoryId;
-		const ownerLogin = permissionContext.ownerLogin;
-		const repoName = permissionContext.name;
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed || permission.repository === null) {
+			return [];
+		}
+
+		const repositoryId = permission.repository.repositoryId;
+		const ownerLogin = permission.repository.ownerLogin;
+		const repoName = permission.repository.name;
 
 		const issueRows = yield* ctx.db
 			.query("github_issues")

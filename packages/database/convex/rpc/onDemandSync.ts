@@ -35,7 +35,10 @@ import { GitHubApiClient } from "../shared/githubApi";
 import { getInstallationToken } from "../shared/githubApp";
 import { parseIsoToMsOrNull as isoToMs } from "../shared/time";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
-import { RepoPermissionContext, RepoPullByNameMiddleware } from "./security";
+import {
+	ReadGitHubRepoByNameMiddleware,
+	ReadGitHubRepoPermission,
+} from "./security";
 
 const factory = createRpcFactory({ schema: confectSchema });
 
@@ -98,6 +101,50 @@ const createUserCollector = () => {
 
 	return { collect, getUsers };
 };
+
+const resolveAuthorizedSyncRepo = (
+	ownerLogin: string,
+	name: string,
+	entityType: "pull_request" | "issue",
+	number: number,
+	permission: {
+		isAllowed: boolean;
+		reason:
+			| "allowed"
+			| "repo_not_found"
+			| "not_authenticated"
+			| "insufficient_permission"
+			| "invalid_payload"
+			| "invalid_repo_info";
+		repository: {
+			repositoryId: number;
+			installationId: number;
+		} | null;
+	},
+) =>
+	Effect.gen(function* () {
+		if (!permission.isAllowed || permission.repository === null) {
+			if (permission.reason === "repo_not_found") {
+				return yield* new RepoNotFoundOnGitHub({ ownerLogin, name });
+			}
+
+			return yield* new EntityNotFound({
+				ownerLogin,
+				name,
+				entityType,
+				number,
+			});
+		}
+
+		if (permission.repository.installationId <= 0) {
+			return yield* new RepoNotFoundOnGitHub({ ownerLogin, name });
+		}
+
+		return {
+			repositoryId: permission.repository.repositoryId,
+			installationId: permission.repository.installationId,
+		};
+	});
 
 // ---------------------------------------------------------------------------
 // Internal mutation: ensure repo exists, return repositoryId
@@ -486,21 +533,19 @@ const syncPullRequestDef = factory
 		}),
 		error: Schema.Union(EntityNotFound, RepoNotFoundOnGitHub),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 syncPullRequestDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
-		const permissionContext = yield* RepoPermissionContext;
-		const repositoryId = permissionContext.repositoryId;
-		const installationId = permissionContext.installationId;
-
-		if (installationId <= 0) {
-			return yield* new RepoNotFoundOnGitHub({
-				ownerLogin: args.ownerLogin,
-				name: args.name,
-			});
-		}
+		const permission = yield* ReadGitHubRepoPermission;
+		const { repositoryId, installationId } = yield* resolveAuthorizedSyncRepo(
+			args.ownerLogin,
+			args.name,
+			"pull_request",
+			args.number,
+			permission,
+		);
 
 		const token = yield* getInstallationToken(installationId).pipe(
 			Effect.mapError(
@@ -734,21 +779,19 @@ const syncIssueDef = factory
 		}),
 		error: Schema.Union(EntityNotFound, RepoNotFoundOnGitHub),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 syncIssueDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
-		const permissionContext = yield* RepoPermissionContext;
-		const repositoryId = permissionContext.repositoryId;
-		const installationId = permissionContext.installationId;
-
-		if (installationId <= 0) {
-			return yield* new RepoNotFoundOnGitHub({
-				ownerLogin: args.ownerLogin,
-				name: args.name,
-			});
-		}
+		const permission = yield* ReadGitHubRepoPermission;
+		const { repositoryId, installationId } = yield* resolveAuthorizedSyncRepo(
+			args.ownerLogin,
+			args.name,
+			"issue",
+			args.number,
+			permission,
+		);
 
 		const token = yield* getInstallationToken(installationId).pipe(
 			Effect.mapError(

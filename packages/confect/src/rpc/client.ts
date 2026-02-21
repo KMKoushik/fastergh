@@ -768,6 +768,14 @@ export interface ServerRpcClientConfig {
 	 * used instead of creating a `ConvexHttpClientLayer` from `url`.
 	 */
 	readonly layer?: Layer.Layer<ConvexClient>;
+	/**
+	 * Optional auth token resolver for server-side requests.
+	 *
+	 * When provided, each `queryPromise` call resolves the current auth token
+	 * and uses a token-authenticated HTTP client. Cache keys are also scoped by
+	 * auth identity to avoid cross-user cache mixing.
+	 */
+	readonly getAuthToken?: () => Promise<string | null | undefined>;
 }
 
 /**
@@ -806,11 +814,83 @@ export function createServerRpcQuery<
 	config: ServerRpcClientConfig,
 	getShared: () => Shared = () => ({}) as Shared,
 ): ServerRpcModuleClient<TModule, Shared> {
-	const httpLayer = config.layer ?? ConvexHttpClientLayer(config.url);
+	const defaultLayer = config.layer ?? ConvexHttpClientLayer(config.url);
+
+	const authScopeByToken = new Map<string, string>();
+	const authLayerByScope = new Map<string, Layer.Layer<ConvexClient>>();
+	let nextAuthScopeId = 0;
+
+	const AUTH_SCOPE_CACHE_LIMIT = 256;
+
+	const getAuthToken = (): Effect.Effect<string | null> => {
+		if (config.getAuthToken === undefined) {
+			return Effect.succeed(null);
+		}
+
+		const resolveToken = config.getAuthToken;
+		return Effect.promise(() => resolveToken()).pipe(
+			Effect.map((token) => {
+				if (token === null || token === undefined || token.length === 0) {
+					return null;
+				}
+				return token;
+			}),
+		);
+	};
+
+	const resetAuthScopeCaches = () => {
+		authScopeByToken.clear();
+		authLayerByScope.clear();
+	};
+
+	const getAuthScope = (token: string | null): string => {
+		if (token === null) {
+			return "anon";
+		}
+
+		const existingScope = authScopeByToken.get(token);
+		if (existingScope !== undefined) {
+			return existingScope;
+		}
+
+		nextAuthScopeId += 1;
+		const scope = `auth-${nextAuthScopeId}`;
+		authScopeByToken.set(token, scope);
+
+		if (authScopeByToken.size > AUTH_SCOPE_CACHE_LIMIT) {
+			resetAuthScopeCaches();
+			authScopeByToken.set(token, scope);
+		}
+
+		return scope;
+	};
+
+	const getLayerForScope = (
+		authScope: string,
+		authToken: string | null,
+	): Layer.Layer<ConvexClient> => {
+		if (config.layer !== undefined) {
+			return config.layer;
+		}
+
+		const cachedLayer = authLayerByScope.get(authScope);
+		if (cachedLayer !== undefined) {
+			return cachedLayer;
+		}
+
+		if (authToken === null) {
+			authLayerByScope.set(authScope, defaultLayer);
+			return defaultLayer;
+		}
+
+		const nextLayer = ConvexHttpClientLayer(config.url, { authToken });
+		authLayerByScope.set(authScope, nextLayer);
+		return nextLayer;
+	};
 
 	/**
 	 * A single `Cache<string, unknown, unknown>` keyed by
-	 * `"endpointName:json(payload)"`.
+	 * `json({ authScope, endpointName, payload })`.
 	 *
 	 * `Cache.make` returns an `Effect` — we run it once eagerly via
 	 * `Effect.runSync` wrapped in a lazy singleton so it's created on first
@@ -830,9 +910,19 @@ export function createServerRpcQuery<
 		capacity: SERVER_QUERY_CACHE_CAPACITY,
 		timeToLive: SERVER_QUERY_CACHE_TTL,
 		lookup: (cacheKey: string) => {
-			const sepIndex = cacheKey.indexOf(":");
-			const endpointName = cacheKey.substring(0, sepIndex);
-			const fullPayload = JSON.parse(cacheKey.substring(sepIndex + 1));
+			const decodedKey = JSON.parse(cacheKey);
+			if (decodedKey === null || typeof decodedKey !== "object") {
+				return Effect.die(new Error("Invalid server RPC cache key"));
+			}
+			if (!("endpointName" in decodedKey) || !("payload" in decodedKey)) {
+				return Effect.die(new Error("Missing server RPC cache key fields"));
+			}
+			if (typeof decodedKey.endpointName !== "string") {
+				return Effect.die(new Error("Invalid server RPC endpoint cache key"));
+			}
+
+			const endpointName = decodedKey.endpointName;
+			const fullPayload = decodedKey.payload;
 			const convexFn = convexFnRegistry.get(endpointName);
 			if (!convexFn) {
 				return Effect.die(
@@ -850,9 +940,7 @@ export function createServerRpcQuery<
 
 	// The cache needs `ConvexClient` from the layer (via createQueryEffect).
 	// We provide the layer, then run the resulting Effect synchronously.
-	const queryCache = Effect.runSync(
-		Effect.provide(cacheEffect, httpLayer),
-	);
+	const queryCache = Effect.runSync(Effect.provide(cacheEffect, defaultLayer));
 
 	const endpointCache = new Map<string, ServerQueryEndpoint<unknown, unknown>>();
 
@@ -867,10 +955,21 @@ export function createServerRpcQuery<
 
 			endpoint = {
 				queryPromise: (payload: unknown) => {
-					const fullPayload = { ...getShared(), ...(payload as object) };
-					const cacheKey = `${prop}:${JSON.stringify(fullPayload)}`;
+					const payloadObject =
+						payload !== null && typeof payload === "object" ? payload : {};
+					const fullPayload = { ...getShared(), ...payloadObject };
 					return Effect.runPromise(
-						Effect.provide(queryCache.get(cacheKey), httpLayer),
+						Effect.gen(function* () {
+							const authToken = yield* getAuthToken();
+							const authScope = getAuthScope(authToken);
+							const cacheKey = JSON.stringify({
+								authScope,
+								endpointName: prop,
+								payload: fullPayload,
+							});
+							const requestLayer = getLayerForScope(authScope, authToken);
+							return yield* Effect.provide(queryCache.get(cacheKey), requestLayer);
+						}),
 					);
 				},
 			};

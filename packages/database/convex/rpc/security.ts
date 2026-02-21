@@ -4,7 +4,7 @@ import {
 	middleware,
 	RpcMiddleware,
 } from "@packages/confect/rpc";
-import { Context, Data, Effect, Either, Schema } from "effect";
+import { Context, Effect, Either, Schema } from "effect";
 import { internal } from "../_generated/api";
 
 const RepoPermissionLevelSchema = Schema.Literal(
@@ -41,13 +41,85 @@ const RepoInfoByIdSchema = Schema.Struct({
 	isPrivate: Schema.optional(Schema.Boolean),
 });
 
+const RepoInfoByNameSuccessResponseSchema = Schema.Struct({
+	_tag: Schema.Literal("Success"),
+	value: RepoInfoByNameSchema,
+});
+
+const RepoInfoByIdSuccessResponseSchema = Schema.Struct({
+	_tag: Schema.Literal("Success"),
+	value: RepoInfoByIdSchema,
+});
+
+const BooleanSuccessResponseSchema = Schema.Struct({
+	_tag: Schema.Literal("Success"),
+	value: Schema.Boolean,
+});
+
+const RepoInfoByNameResponseSchema = Schema.Union(
+	RepoInfoByNameSchema,
+	RepoInfoByNameSuccessResponseSchema,
+);
+
+const RepoInfoByIdResponseSchema = Schema.Union(
+	RepoInfoByIdSchema,
+	RepoInfoByIdSuccessResponseSchema,
+);
+
+const BooleanResponseSchema = Schema.Union(
+	Schema.Boolean,
+	BooleanSuccessResponseSchema,
+);
+
 const decodeRepoByIdPayload = Schema.decodeUnknownEither(RepoByIdPayloadSchema);
 const decodeRepoByNamePayload = Schema.decodeUnknownEither(
 	RepoByNamePayloadSchema,
 );
-const decodeRepoInfoByName = Schema.decodeUnknownEither(RepoInfoByNameSchema);
-const decodeRepoInfoById = Schema.decodeUnknownEither(RepoInfoByIdSchema);
-const decodeBoolean = Schema.decodeUnknownEither(Schema.Boolean);
+const decodeRepoInfoByNameResponse = Schema.decodeUnknownEither(
+	RepoInfoByNameResponseSchema,
+);
+const decodeRepoInfoByIdResponse = Schema.decodeUnknownEither(
+	RepoInfoByIdResponseSchema,
+);
+const decodeBooleanResponse = Schema.decodeUnknownEither(BooleanResponseSchema);
+
+const isRepoInfoByNameSuccessResponse = Schema.is(
+	RepoInfoByNameSuccessResponseSchema,
+);
+const isRepoInfoByIdSuccessResponse = Schema.is(
+	RepoInfoByIdSuccessResponseSchema,
+);
+const isBooleanSuccessResponse = Schema.is(BooleanSuccessResponseSchema);
+
+const unwrapRepoInfoByNameResponse = (
+	response: Schema.Schema.Type<typeof RepoInfoByNameResponseSchema>,
+): Schema.Schema.Type<typeof RepoInfoByNameSchema> => {
+	if (isRepoInfoByNameSuccessResponse(response)) {
+		return response.value;
+	}
+
+	return response;
+};
+
+const unwrapRepoInfoByIdResponse = (
+	response: Schema.Schema.Type<typeof RepoInfoByIdResponseSchema>,
+): Schema.Schema.Type<typeof RepoInfoByIdSchema> => {
+	if (isRepoInfoByIdSuccessResponse(response)) {
+		return response.value;
+	}
+
+	return response;
+};
+
+const unwrapBooleanResponse = (
+	response: Schema.Schema.Type<typeof BooleanResponseSchema>,
+): boolean => {
+	if (isBooleanSuccessResponse(response)) {
+		return response.value;
+	}
+
+	return response;
+};
 
 type RepoPermissionContextValue = {
 	repositoryId: number;
@@ -59,9 +131,34 @@ type RepoPermissionContextValue = {
 	userId: string | null;
 };
 
+type RepoSummary = {
+	repositoryId: number;
+	ownerLogin: string;
+	name: string;
+	installationId: number;
+	isPrivate: boolean;
+};
+
+type ReadGitHubRepoPermissionValue = {
+	isAllowed: boolean;
+	reason:
+		| "allowed"
+		| "repo_not_found"
+		| "not_authenticated"
+		| "insufficient_permission"
+		| "invalid_payload"
+		| "invalid_repo_info";
+	userId: string | null;
+	repository: RepoSummary | null;
+};
+
 export class RepoPermissionContext extends Context.Tag(
 	"@quickhub/RepoPermissionContext",
 )<RepoPermissionContext, RepoPermissionContextValue>() {}
+
+export class ReadGitHubRepoPermission extends Context.Tag(
+	"@quickhub/ReadGitHubRepoPermission",
+)<ReadGitHubRepoPermission, ReadGitHubRepoPermissionValue>() {}
 
 type AuthenticatedUserValue = {
 	userId: string;
@@ -71,20 +168,24 @@ export class AuthenticatedUser extends Context.Tag(
 	"@quickhub/AuthenticatedUser",
 )<AuthenticatedUser, AuthenticatedUserValue>() {}
 
-class RepoAccessViolation extends Data.TaggedError("RepoAccessViolation")<{
-	reason:
-		| "invalid_payload"
-		| "repo_not_found"
-		| "not_authenticated"
-		| "insufficient_permission"
-		| "invalid_repo_info";
-	message: string;
-	repositoryId: number | null;
-	ownerLogin: string | null;
-	name: string | null;
-	required: RepoPermissionLevel;
-	userId: string | null;
-}> {}
+export class RepoAccessViolation extends Schema.TaggedError<RepoAccessViolation>()(
+	"RepoAccessViolation",
+	{
+		reason: Schema.Literal(
+			"invalid_payload",
+			"repo_not_found",
+			"not_authenticated",
+			"insufficient_permission",
+			"invalid_repo_info",
+		),
+		message: Schema.String,
+		repositoryId: Schema.NullOr(Schema.Number),
+		ownerLogin: Schema.NullOr(Schema.String),
+		name: Schema.NullOr(Schema.String),
+		required: RepoPermissionLevelSchema,
+		userId: Schema.NullOr(Schema.String),
+	},
+) {}
 
 const parseUserId = (
 	identity: {
@@ -114,7 +215,7 @@ const ensureRepoPermission = (
 	requireAuthenticated: boolean,
 	ownerLogin: string | null,
 	name: string | null,
-): Effect.Effect<boolean> =>
+): Effect.Effect<boolean, RepoAccessViolation> =>
 	Effect.gen(function* () {
 		const hasPermissionRaw = yield* Effect.promise(() =>
 			options.ctx.runQuery(internal.rpc.codeBrowse.hasRepoPermission, {
@@ -126,8 +227,11 @@ const ensureRepoPermission = (
 			}),
 		).pipe(Effect.orDie);
 
-		const hasPermission = decodeBoolean(hasPermissionRaw);
-		if (Either.isLeft(hasPermission) || !hasPermission.right) {
+		const hasPermission = decodeBooleanResponse(hasPermissionRaw);
+		if (
+			Either.isLeft(hasPermission) ||
+			!unwrapBooleanResponse(hasPermission.right)
+		) {
 			return yield* Effect.die(
 				new RepoAccessViolation({
 					reason:
@@ -152,7 +256,7 @@ const authorizeRepoById = (
 	options: MiddlewareOptions,
 	required: RepoPermissionLevel,
 	requireAuthenticated: boolean,
-): Effect.Effect<RepoPermissionContextValue> =>
+): Effect.Effect<RepoPermissionContextValue, RepoAccessViolation> =>
 	Effect.gen(function* () {
 		const decodedPayload = decodeRepoByIdPayload(options.payload);
 		if (Either.isLeft(decodedPayload)) {
@@ -176,8 +280,23 @@ const authorizeRepoById = (
 			}),
 		).pipe(Effect.orDie);
 
-		const repoInfo = decodeRepoInfoById(repoInfoRaw);
-		if (Either.isLeft(repoInfo) || !repoInfo.right.found) {
+		const repoInfoResponse = decodeRepoInfoByIdResponse(repoInfoRaw);
+		if (Either.isLeft(repoInfoResponse)) {
+			return yield* Effect.die(
+				new RepoAccessViolation({
+					reason: "invalid_repo_info",
+					message: "Repository metadata is incomplete",
+					repositoryId,
+					ownerLogin: null,
+					name: null,
+					required,
+					userId: null,
+				}),
+			);
+		}
+
+		const repoInfo = unwrapRepoInfoByIdResponse(repoInfoResponse.right);
+		if (!repoInfo.found) {
 			return yield* Effect.die(
 				new RepoAccessViolation({
 					reason: "repo_not_found",
@@ -191,8 +310,8 @@ const authorizeRepoById = (
 			);
 		}
 
-		const ownerLogin = repoInfo.right.ownerLogin;
-		const name = repoInfo.right.name;
+		const ownerLogin = repoInfo.ownerLogin;
+		const name = repoInfo.name;
 		if (ownerLogin === undefined || name === undefined) {
 			return yield* Effect.die(
 				new RepoAccessViolation({
@@ -222,7 +341,7 @@ const authorizeRepoById = (
 			);
 		}
 
-		const isPrivate = repoInfo.right.isPrivate ?? true;
+		const isPrivate = repoInfo.isPrivate ?? true;
 		yield* ensureRepoPermission(
 			options,
 			repositoryId,
@@ -238,7 +357,7 @@ const authorizeRepoById = (
 			repositoryId,
 			ownerLogin,
 			name,
-			installationId: repoInfo.right.installationId ?? 0,
+			installationId: repoInfo.installationId ?? 0,
 			isPrivate,
 			required,
 			userId,
@@ -249,7 +368,7 @@ const authorizeRepoByName = (
 	options: MiddlewareOptions,
 	required: RepoPermissionLevel,
 	requireAuthenticated: boolean,
-): Effect.Effect<RepoPermissionContextValue> =>
+): Effect.Effect<RepoPermissionContextValue, RepoAccessViolation> =>
 	Effect.gen(function* () {
 		const decodedPayload = decodeRepoByNamePayload(options.payload);
 		if (Either.isLeft(decodedPayload)) {
@@ -276,8 +395,23 @@ const authorizeRepoByName = (
 			}),
 		).pipe(Effect.orDie);
 
-		const repoInfo = decodeRepoInfoByName(repoInfoRaw);
-		if (Either.isLeft(repoInfo) || !repoInfo.right.found) {
+		const repoInfoResponse = decodeRepoInfoByNameResponse(repoInfoRaw);
+		if (Either.isLeft(repoInfoResponse)) {
+			return yield* Effect.die(
+				new RepoAccessViolation({
+					reason: "invalid_repo_info",
+					message: "Repository metadata is incomplete",
+					repositoryId: null,
+					ownerLogin,
+					name,
+					required,
+					userId: null,
+				}),
+			);
+		}
+
+		const repoInfo = unwrapRepoInfoByNameResponse(repoInfoResponse.right);
+		if (!repoInfo.found) {
 			return yield* Effect.die(
 				new RepoAccessViolation({
 					reason: "repo_not_found",
@@ -291,7 +425,7 @@ const authorizeRepoByName = (
 			);
 		}
 
-		const repositoryId = repoInfo.right.repositoryId;
+		const repositoryId = repoInfo.repositoryId;
 		if (repositoryId === undefined) {
 			return yield* Effect.die(
 				new RepoAccessViolation({
@@ -321,7 +455,7 @@ const authorizeRepoByName = (
 			);
 		}
 
-		const isPrivate = repoInfo.right.isPrivate ?? true;
+		const isPrivate = repoInfo.isPrivate ?? true;
 		yield* ensureRepoPermission(
 			options,
 			repositoryId,
@@ -337,10 +471,231 @@ const authorizeRepoByName = (
 			repositoryId,
 			ownerLogin,
 			name,
-			installationId: repoInfo.right.installationId ?? 0,
+			installationId: repoInfo.installationId ?? 0,
 			isPrivate,
 			required,
 			userId,
+		};
+	});
+
+const buildRepoSummaryByName = (
+	ownerLogin: string,
+	name: string,
+	repositoryId: number,
+	installationId: number,
+	isPrivate: boolean,
+): RepoSummary => ({
+	repositoryId,
+	ownerLogin,
+	name,
+	installationId,
+	isPrivate,
+});
+
+const checkReadPermission = (
+	options: MiddlewareOptions,
+	repositoryId: number,
+	isPrivate: boolean,
+	userId: string | null,
+) =>
+	Effect.gen(function* () {
+		// Match GitHub parity: public repositories are readable without membership.
+		if (!isPrivate) {
+			return true;
+		}
+
+		const hasPermissionRaw = yield* Effect.promise(() =>
+			options.ctx.runQuery(internal.rpc.codeBrowse.hasRepoPermission, {
+				repositoryId,
+				isPrivate,
+				userId,
+				required: "pull",
+				requireAuthenticated: false,
+			}),
+		).pipe(Effect.orDie);
+
+		const hasPermission = decodeBooleanResponse(hasPermissionRaw);
+		if (Either.isLeft(hasPermission)) {
+			return false;
+		}
+
+		return unwrapBooleanResponse(hasPermission.right);
+	});
+
+const authorizeReadRepoByName = (
+	options: MiddlewareOptions,
+): Effect.Effect<ReadGitHubRepoPermissionValue> =>
+	Effect.gen(function* () {
+		const userId = yield* resolveIdentityUserId(options);
+		const decodedPayload = decodeRepoByNamePayload(options.payload);
+
+		if (Either.isLeft(decodedPayload)) {
+			return {
+				isAllowed: false,
+				reason: "invalid_payload",
+				userId,
+				repository: null,
+			};
+		}
+
+		const ownerLogin = decodedPayload.right.ownerLogin;
+		const name = decodedPayload.right.name;
+		const repoInfoRaw = yield* Effect.promise(() =>
+			options.ctx.runQuery(internal.rpc.codeBrowse.getRepoInfo, {
+				ownerLogin,
+				name,
+			}),
+		).pipe(Effect.orDie);
+
+		const repoInfoResponse = decodeRepoInfoByNameResponse(repoInfoRaw);
+		if (Either.isLeft(repoInfoResponse)) {
+			return {
+				isAllowed: false,
+				reason: "invalid_repo_info",
+				userId,
+				repository: null,
+			};
+		}
+
+		const repoInfo = unwrapRepoInfoByNameResponse(repoInfoResponse.right);
+		if (!repoInfo.found) {
+			return {
+				isAllowed: false,
+				reason: "repo_not_found",
+				userId,
+				repository: null,
+			};
+		}
+
+		const repositoryId = repoInfo.repositoryId;
+		if (repositoryId === undefined) {
+			return {
+				isAllowed: false,
+				reason: "invalid_repo_info",
+				userId,
+				repository: null,
+			};
+		}
+
+		const isPrivate = repoInfo.isPrivate ?? true;
+		const repository = buildRepoSummaryByName(
+			ownerLogin,
+			name,
+			repositoryId,
+			repoInfo.installationId ?? 0,
+			isPrivate,
+		);
+
+		const hasPermission = yield* checkReadPermission(
+			options,
+			repositoryId,
+			isPrivate,
+			userId,
+		);
+
+		if (!hasPermission) {
+			return {
+				isAllowed: false,
+				reason:
+					userId === null ? "not_authenticated" : "insufficient_permission",
+				userId,
+				repository,
+			};
+		}
+
+		return {
+			isAllowed: true,
+			reason: "allowed",
+			userId,
+			repository,
+		};
+	});
+
+const authorizeReadRepoById = (
+	options: MiddlewareOptions,
+): Effect.Effect<ReadGitHubRepoPermissionValue> =>
+	Effect.gen(function* () {
+		const userId = yield* resolveIdentityUserId(options);
+		const decodedPayload = decodeRepoByIdPayload(options.payload);
+
+		if (Either.isLeft(decodedPayload)) {
+			return {
+				isAllowed: false,
+				reason: "invalid_payload",
+				userId,
+				repository: null,
+			};
+		}
+
+		const repositoryId = decodedPayload.right.repositoryId;
+		const repoInfoRaw = yield* Effect.promise(() =>
+			options.ctx.runQuery(internal.rpc.codeBrowse.getRepoInfoById, {
+				repositoryId,
+			}),
+		).pipe(Effect.orDie);
+
+		const repoInfoResponse = decodeRepoInfoByIdResponse(repoInfoRaw);
+		if (Either.isLeft(repoInfoResponse)) {
+			return {
+				isAllowed: false,
+				reason: "invalid_repo_info",
+				userId,
+				repository: null,
+			};
+		}
+
+		const repoInfo = unwrapRepoInfoByIdResponse(repoInfoResponse.right);
+		if (!repoInfo.found) {
+			return {
+				isAllowed: false,
+				reason: "repo_not_found",
+				userId,
+				repository: null,
+			};
+		}
+
+		const ownerLogin = repoInfo.ownerLogin;
+		const name = repoInfo.name;
+		if (ownerLogin === undefined || name === undefined) {
+			return {
+				isAllowed: false,
+				reason: "invalid_repo_info",
+				userId,
+				repository: null,
+			};
+		}
+
+		const isPrivate = repoInfo.isPrivate ?? true;
+		const repository = buildRepoSummaryByName(
+			ownerLogin,
+			name,
+			repositoryId,
+			repoInfo.installationId ?? 0,
+			isPrivate,
+		);
+
+		const hasPermission = yield* checkReadPermission(
+			options,
+			repositoryId,
+			isPrivate,
+			userId,
+		);
+
+		if (!hasPermission) {
+			return {
+				isAllowed: false,
+				reason:
+					userId === null ? "not_authenticated" : "insufficient_permission",
+				userId,
+				repository,
+			};
+		}
+
+		return {
+			isAllowed: true,
+			reason: "allowed",
+			userId,
+			repository,
 		};
 	});
 
@@ -348,6 +703,21 @@ export class RequireAuthenticatedMiddleware extends RpcMiddleware.Tag<RequireAut
 	"RequireAuthenticatedMiddleware",
 	{
 		provides: AuthenticatedUser,
+		failure: RepoAccessViolation,
+	},
+) {}
+
+export class ReadGitHubRepoByIdMiddleware extends RpcMiddleware.Tag<ReadGitHubRepoByIdMiddleware>()(
+	"ReadGitHubRepoByIdMiddleware",
+	{
+		provides: ReadGitHubRepoPermission,
+	},
+) {}
+
+export class ReadGitHubRepoByNameMiddleware extends RpcMiddleware.Tag<ReadGitHubRepoByNameMiddleware>()(
+	"ReadGitHubRepoByNameMiddleware",
+	{
+		provides: ReadGitHubRepoPermission,
 	},
 ) {}
 
@@ -355,6 +725,7 @@ export class RepoPullByIdMiddleware extends RpcMiddleware.Tag<RepoPullByIdMiddle
 	"RepoPullByIdMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -362,6 +733,7 @@ export class RepoTriageByIdMiddleware extends RpcMiddleware.Tag<RepoTriageByIdMi
 	"RepoTriageByIdMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -369,6 +741,7 @@ export class RepoPushByIdMiddleware extends RpcMiddleware.Tag<RepoPushByIdMiddle
 	"RepoPushByIdMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -376,6 +749,7 @@ export class RepoMaintainByIdMiddleware extends RpcMiddleware.Tag<RepoMaintainBy
 	"RepoMaintainByIdMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -383,6 +757,7 @@ export class RepoAdminByIdMiddleware extends RpcMiddleware.Tag<RepoAdminByIdMidd
 	"RepoAdminByIdMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -390,6 +765,7 @@ export class RepoPullByNameMiddleware extends RpcMiddleware.Tag<RepoPullByNameMi
 	"RepoPullByNameMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -397,6 +773,7 @@ export class RepoTriageByNameMiddleware extends RpcMiddleware.Tag<RepoTriageByNa
 	"RepoTriageByNameMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -404,6 +781,7 @@ export class RepoPushByNameMiddleware extends RpcMiddleware.Tag<RepoPushByNameMi
 	"RepoPushByNameMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -411,6 +789,7 @@ export class RepoMaintainByNameMiddleware extends RpcMiddleware.Tag<RepoMaintain
 	"RepoMaintainByNameMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -418,6 +797,7 @@ export class RepoAdminByNameMiddleware extends RpcMiddleware.Tag<RepoAdminByName
 	"RepoAdminByNameMiddleware",
 	{
 		provides: RepoPermissionContext,
+		failure: RepoAccessViolation,
 	},
 ) {}
 
@@ -441,6 +821,12 @@ export const DatabaseSecurityMiddlewareImplementations: ReadonlyArray<Middleware
 				}
 				return { userId };
 			}),
+		),
+		middleware(ReadGitHubRepoByIdMiddleware, (options: MiddlewareOptions) =>
+			authorizeReadRepoById(options),
+		),
+		middleware(ReadGitHubRepoByNameMiddleware, (options: MiddlewareOptions) =>
+			authorizeReadRepoByName(options),
 		),
 		middleware(RepoPullByIdMiddleware, (options: MiddlewareOptions) =>
 			authorizeRepoById(options, "pull", false),

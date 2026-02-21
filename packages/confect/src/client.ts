@@ -112,8 +112,14 @@ export const ConvexClientLayer = (
  */
 export const ConvexHttpClientLayer = (
 	url: string,
+	config: {
+		readonly authToken?: string;
+	} = {},
 ): Layer.Layer<ConvexClient> => {
 	const httpClient = new ConvexHttpClient(url);
+	if (config.authToken !== undefined && config.authToken.length > 0) {
+		httpClient.setAuth(config.authToken);
+	}
 
 	const service: ConvexClientService = {
 		query: <Query extends FunctionReference<"query">>(

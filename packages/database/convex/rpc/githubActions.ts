@@ -15,7 +15,8 @@ import { getInstallationToken } from "../shared/githubApp";
 import { lookupGitHubTokenByUserIdConfect } from "../shared/githubToken";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
 import {
-	RepoPullByNameMiddleware,
+	ReadGitHubRepoByNameMiddleware,
+	ReadGitHubRepoPermission,
 	RepoPushByNameMiddleware,
 	RepoTriageByIdMiddleware,
 } from "./security";
@@ -315,7 +316,7 @@ const fetchPrDiffDef = factory
 		},
 		success: Schema.NullOr(Schema.String),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Fetch workflow job logs on demand from GitHub.
@@ -337,7 +338,7 @@ const fetchWorkflowJobLogsDef = factory
 			}),
 		),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 const RepoAssigneeSchema = Schema.Struct({
 	login: Schema.String,
@@ -407,7 +408,7 @@ const listRepoAssigneesDef = factory
 		},
 		success: Schema.Array(RepoAssigneeListItemSchema),
 	})
-	.middleware(RepoPullByNameMiddleware);
+	.middleware(ReadGitHubRepoByNameMiddleware);
 
 /**
  * Fetch PR file list from GitHub and persist to Convex.
@@ -904,6 +905,9 @@ syncStalePermissionsDef.implement((args) =>
 
 fetchPrDiffDef.implement((args) =>
 	Effect.gen(function* () {
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed) return null;
+
 		const ctx = yield* ConfectActionCtx;
 		const identity = yield* ctx.auth.getUserIdentity();
 		if (Option.isNone(identity)) return null;
@@ -918,28 +922,20 @@ fetchPrDiffDef.implement((args) =>
 			GitHubApiClient.fromToken(token),
 		);
 
-		const request = HttpClientRequest.setHeader(
-			HttpClientRequest.get(
-				`/repos/${args.ownerLogin}/${args.name}/pulls/${args.number}`,
-			),
-			"accept",
-			"application/vnd.github.diff",
+		const diff = yield* github.pullsGetDiff(
+			args.ownerLogin,
+			args.name,
+			String(args.number),
 		);
-		const response = yield* github.httpClient.execute(request);
-		if (response.status === 404) return null;
-		if (response.status < 200 || response.status >= 300) {
-			const errorBody = yield* Effect.orElseSucceed(response.text, () => "");
-			return yield* Effect.fail(
-				new Error(`GitHub API returned ${response.status}: ${errorBody}`),
-			);
-		}
-		const diff = yield* response.text;
 		return diff;
 	}).pipe(Effect.catchAll(() => Effect.succeed(null))),
 );
 
 fetchWorkflowJobLogsDef.implement((args) =>
 	Effect.gen(function* () {
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed) return null;
+
 		const ctx = yield* ConfectActionCtx;
 		const identity = yield* ctx.auth.getUserIdentity();
 		if (Option.isNone(identity)) return null;
@@ -954,22 +950,13 @@ fetchWorkflowJobLogsDef.implement((args) =>
 			GitHubApiClient.fromToken(token),
 		);
 
-		const response = yield* github.httpClient.execute(
-			HttpClientRequest.get(
-				`/repos/${args.ownerLogin}/${args.name}/actions/jobs/${args.jobId}/logs`,
-			),
+		const text = yield* github.actionsDownloadJobLogs(
+			args.ownerLogin,
+			args.name,
+			String(args.jobId),
 		);
 
-		if (response.status === 404) return null;
-		if (response.status < 200 || response.status >= 300) {
-			const errorBody = yield* Effect.orElseSucceed(response.text, () => "");
-			return yield* Effect.fail(
-				new Error(`GitHub API returned ${response.status}: ${errorBody}`),
-			);
-		}
-
-		const text = yield* response.text;
-		if (text.trim() === "") return null;
+		if (text === null || text.trim() === "") return null;
 
 		if (text.length <= MAX_JOB_LOG_CHARS) {
 			return {
@@ -986,63 +973,8 @@ fetchWorkflowJobLogsDef.implement((args) =>
 );
 
 // ---------------------------------------------------------------------------
-// Actions control implementations — uses GitHubApiClient.httpClient
+// Actions control implementations — uses GitHubApiClient helper methods
 // ---------------------------------------------------------------------------
-
-/**
- * Helper: call a GitHub Actions control endpoint (POST, empty body, 202 on success).
- * Uses the existing GitHubApiClient httpClient which handles auth headers,
- * base URL rewriting, and rate-limit detection.
- */
-const callActionsControlEndpoint = (
-	github: IGitHubApiClient,
-	path: string,
-	payload?: Readonly<Record<string, string | number | boolean | null>>,
-): Effect.Effect<{ accepted: boolean }, ActionsControlError> =>
-	Effect.gen(function* () {
-		const request =
-			payload === undefined
-				? HttpClientRequest.post(path)
-				: HttpClientRequest.post(path).pipe(
-						HttpClientRequest.bodyUnsafeJson(payload),
-					);
-
-		const response = yield* github.httpClient.execute(request).pipe(
-			Effect.catchAll(
-				(e) =>
-					new ActionsControlError({
-						status: 0,
-						message: `Request failed: ${e.message}`,
-					}),
-			),
-		);
-
-		if (
-			response.status === 202 ||
-			response.status === 201 ||
-			response.status === 204
-		) {
-			return { accepted: true };
-		}
-
-		const errorBody = yield* Effect.orElseSucceed(response.text, () => "");
-
-		let message = `GitHub returned ${response.status}`;
-		try {
-			const parsed = JSON.parse(errorBody);
-			if (
-				typeof parsed === "object" &&
-				parsed !== null &&
-				"message" in parsed
-			) {
-				message = typeof parsed.message === "string" ? parsed.message : message;
-			}
-		} catch {
-			// use default message
-		}
-
-		return yield* new ActionsControlError({ status: response.status, message });
-	});
 
 const isoTimestampToMs = (value: string): number => {
 	const parsed = Date.parse(value);
@@ -1151,6 +1083,9 @@ const resolveRepositoryIdForWrite = (
 
 listRepoAssigneesDef.implement((args) =>
 	Effect.gen(function* () {
+		const permission = yield* ReadGitHubRepoPermission;
+		if (!permission.isAllowed) return [];
+
 		const github = yield* resolveActionsGitHubClient();
 		const normalizedQuery = (args.query ?? "").trim();
 
@@ -1238,42 +1173,78 @@ listRepoAssigneesDef.implement((args) =>
 rerunWorkflowRunDef.implement((args) =>
 	Effect.gen(function* () {
 		const github = yield* resolveActionsGitHubClient();
-		return yield* callActionsControlEndpoint(
-			github,
-			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/actions/runs/${String(args.githubRunId)}/rerun`,
+		return yield* github.actionsRerunWorkflow(
+			encodeURIComponent(args.ownerLogin),
+			encodeURIComponent(args.name),
+			String(args.githubRunId),
 		);
-	}),
+	}).pipe(
+		Effect.catchAll(
+			(e) =>
+				new ActionsControlError({
+					status: "status" in e ? (e.status ?? 0) : 0,
+					message: e.message,
+				}),
+		),
+	),
 );
 
 rerunFailedJobsDef.implement((args) =>
 	Effect.gen(function* () {
 		const github = yield* resolveActionsGitHubClient();
-		return yield* callActionsControlEndpoint(
-			github,
-			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/actions/runs/${String(args.githubRunId)}/rerun-failed-jobs`,
+		return yield* github.actionsRerunFailedJobs(
+			encodeURIComponent(args.ownerLogin),
+			encodeURIComponent(args.name),
+			String(args.githubRunId),
 		);
-	}),
+	}).pipe(
+		Effect.catchAll(
+			(e) =>
+				new ActionsControlError({
+					status: "status" in e ? (e.status ?? 0) : 0,
+					message: e.message,
+				}),
+		),
+	),
 );
 
 cancelWorkflowRunDef.implement((args) =>
 	Effect.gen(function* () {
 		const github = yield* resolveActionsGitHubClient();
-		return yield* callActionsControlEndpoint(
-			github,
-			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/actions/runs/${String(args.githubRunId)}/cancel`,
+		return yield* github.actionsCancelWorkflowRun(
+			encodeURIComponent(args.ownerLogin),
+			encodeURIComponent(args.name),
+			String(args.githubRunId),
 		);
-	}),
+	}).pipe(
+		Effect.catchAll(
+			(e) =>
+				new ActionsControlError({
+					status: "status" in e ? (e.status ?? 0) : 0,
+					message: e.message,
+				}),
+		),
+	),
 );
 
 dispatchWorkflowDef.implement((args) =>
 	Effect.gen(function* () {
 		const github = yield* resolveActionsGitHubClient();
-		return yield* callActionsControlEndpoint(
-			github,
-			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/actions/workflows/${String(args.workflowId)}/dispatches`,
-			{ ref: args.ref },
+		return yield* github.actionsDispatchWorkflow(
+			encodeURIComponent(args.ownerLogin),
+			encodeURIComponent(args.name),
+			String(args.workflowId),
+			args.ref,
 		);
-	}),
+	}).pipe(
+		Effect.catchAll(
+			(e) =>
+				new ActionsControlError({
+					status: "status" in e ? (e.status ?? 0) : 0,
+					message: e.message,
+				}),
+		),
+	),
 );
 
 createPrReviewCommentDef.implement((args) =>

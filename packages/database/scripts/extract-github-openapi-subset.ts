@@ -23,8 +23,12 @@ const PATHS_AND_METHODS: Record<string, ReadonlyArray<string>> = {
 	"/repos/{owner}/{repo}/pulls/{pull_number}": ["get"],
 	"/repos/{owner}/{repo}/pulls/{pull_number}/merge": ["put"],
 	"/repos/{owner}/{repo}/pulls/{pull_number}/reviews": ["get", "post"],
-	"/repos/{owner}/{repo}/pulls/{pull_number}/comments": ["get"],
+	"/repos/{owner}/{repo}/pulls/{pull_number}/comments": ["get", "post"],
+	"/repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies": [
+		"post",
+	],
 	"/repos/{owner}/{repo}/pulls/{pull_number}/files": ["get"],
+	"/repos/{owner}/{repo}/pulls/{pull_number}/update-branch": ["put"],
 	"/repos/{owner}/{repo}/issues": ["get", "post"],
 	"/repos/{owner}/{repo}/issues/{issue_number}": ["get", "patch"],
 	"/repos/{owner}/{repo}/issues/{issue_number}/comments": ["get", "post"],
