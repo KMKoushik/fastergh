@@ -1,6 +1,7 @@
 "use client";
 
 import { Result, useAtomValue } from "@effect-atom/atom-react";
+import { Button } from "@packages/ui/components/button";
 import {
 	ChevronRight,
 	File,
@@ -11,8 +12,9 @@ import { Link } from "@packages/ui/components/link";
 import { cn } from "@packages/ui/lib/utils";
 import { useCodeBrowse } from "@packages/ui/rpc/code-browse";
 import { Either, Option, Schema } from "effect";
-import { useSearchParams } from "next/navigation";
+import { parseAsString, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
+import { extractErrorTag } from "@/lib/rpc-error";
 
 // ---------------------------------------------------------------------------
 // Tree building
@@ -126,16 +128,6 @@ function buildTree(
 }
 
 // ---------------------------------------------------------------------------
-// Error helpers
-// ---------------------------------------------------------------------------
-
-function errorTag(err: unknown): string | null {
-	if (typeof err !== "object" || err === null || !("_tag" in err)) return null;
-	const val = err._tag;
-	return typeof val === "string" ? val : null;
-}
-
-// ---------------------------------------------------------------------------
 // Components
 // ---------------------------------------------------------------------------
 
@@ -165,11 +157,13 @@ function TreeNodeItem({
 	if (node.type === "tree") {
 		return (
 			<div>
-				<button
+				<Button
 					type="button"
+					variant="ghost"
+					size="sm"
 					onClick={() => setExpanded((prev) => !prev)}
 					className={cn(
-						"flex w-full items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground transition-colors",
+						"h-auto w-full justify-start gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground hover:bg-sidebar-accent hover:text-foreground transition-colors",
 					)}
 					style={{ paddingLeft: `${depth * 12 + 6}px` }}
 				>
@@ -179,9 +173,9 @@ function TreeNodeItem({
 							expanded && "rotate-90",
 						)}
 					/>
-					<Folder className="size-3 shrink-0 text-blue-400" />
+					<Folder className="size-3 shrink-0 text-status-repo" />
 					<span className="truncate">{node.name}</span>
-				</button>
+				</Button>
 				{expanded && (
 					<div>
 						{node.children.map((child) => (
@@ -216,7 +210,7 @@ function TreeNodeItem({
 			style={{ paddingLeft: `${depth * 12 + 6 + 16}px` }}
 		>
 			{!node.read && (
-				<span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+				<span className="size-1.5 shrink-0 rounded-full bg-status-open" />
 			)}
 			<File className={cn("size-3 shrink-0", fileClass)} />
 			<span className={cn("truncate", fileClass)}>{node.name}</span>
@@ -242,8 +236,7 @@ export function FileTreeClient({
 		[client, owner, name],
 	);
 	const treeResult = useAtomValue(treeAtom);
-	const searchParams = useSearchParams();
-	const activePath = searchParams.get("path");
+	const [activePath] = useQueryState("path", parseAsString);
 	const treeValueOption = Result.value(treeResult);
 	const treeSha = useMemo(
 		() => (Option.isSome(treeValueOption) ? treeValueOption.value.sha : "HEAD"),
@@ -298,7 +291,7 @@ export function FileTreeClient({
 	}
 
 	if (hasError && tree === null) {
-		const tag = errorTag(errorOption.value);
+		const tag = extractErrorTag(errorOption.value);
 		const message =
 			tag === "NotAuthenticated"
 				? "Sign in to browse code"

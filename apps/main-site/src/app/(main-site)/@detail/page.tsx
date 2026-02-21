@@ -4,7 +4,7 @@ import { serverQueries } from "@/lib/server-queries";
 import { DashboardSkeleton, HomeDashboard } from "./home-dashboard-client";
 
 /**
- * Root page for the @detail slot — shows the personalized launch pad at "/".
+ * Root page for the @detail slot — shows the personalized dashboard at "/".
  * This must exist as a page.tsx (not just default.tsx) so that navigating
  * back to "/" from a nested route properly resolves the parallel route
  * instead of showing a stale detail panel.

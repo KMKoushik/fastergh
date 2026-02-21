@@ -1,0 +1,143 @@
+"use client";
+
+import { useSubscriptionWithInitial } from "@packages/confect/rpc";
+import {
+	Avatar,
+	AvatarFallback,
+	AvatarImage,
+} from "@packages/ui/components/avatar";
+import { Button } from "@packages/ui/components/button";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@packages/ui/components/collapsible";
+import { ChevronRight, Download } from "@packages/ui/components/icons";
+import { Link } from "@packages/ui/components/link";
+import { cn } from "@packages/ui/lib/utils";
+import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
+import { Array as Arr, pipe, Record as Rec } from "effect";
+import { usePathname } from "next/navigation";
+import { useMemo } from "react";
+import type { SidebarRepo } from "./sidebar-client";
+
+const EmptyPayload: Record<string, never> = {};
+
+/**
+ * Body content for the homepage / inbox sidebar — grouped repo list.
+ * Rendered inside the universal SidebarClient shell.
+ */
+export function SidebarRepoList({
+	initialRepos,
+}: {
+	initialRepos: ReadonlyArray<SidebarRepo>;
+}) {
+	const pathname = usePathname();
+	const segments = pathname.split("/").filter(Boolean);
+	const activeOwner = segments[0] ?? null;
+	const activeName = segments[1] ?? null;
+
+	const client = useProjectionQueries();
+	const reposAtom = useMemo(
+		() => client.listRepos.subscription(EmptyPayload),
+		[client],
+	);
+	const repos = useSubscriptionWithInitial(reposAtom, initialRepos);
+
+	const grouped = useMemo(
+		() =>
+			pipe(
+				repos,
+				Arr.groupBy((repo) => repo.ownerLogin),
+			),
+		[repos],
+	);
+	const entries = useMemo(() => Rec.toEntries(grouped), [grouped]);
+
+	return (
+		<>
+			{/* Header */}
+			<div className="shrink-0 px-2 pt-2 pb-1.5 border-b border-sidebar-border">
+				<div className="flex items-center justify-between">
+					<h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+						Repos
+					</h2>
+					<span className="text-[10px] text-muted-foreground/30 tabular-nums">
+						{repos.length}
+					</span>
+				</div>
+			</div>
+
+			{/* Repo list */}
+			<div className="py-0.5">
+				{repos.length === 0 && (
+					<div className="px-2 py-6 text-center">
+						<p className="text-[11px] font-medium text-foreground">
+							No repos yet
+						</p>
+						<p className="mt-0.5 text-[9px] text-muted-foreground/40 leading-snug">
+							Install the GitHub App to sync.
+						</p>
+					</div>
+				)}
+
+				{repos.length > 0 &&
+					entries.map(([owner, ownerRepos]) => {
+						const ownerHasActiveRepo = activeOwner === owner;
+						const ownerAvatarUrl = ownerRepos[0]?.ownerAvatarUrl ?? null;
+						return (
+							<Collapsible
+								key={owner}
+								defaultOpen={ownerHasActiveRepo || entries.length === 1}
+							>
+								<CollapsibleTrigger
+									className={cn(
+										"flex w-full items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors [&[data-state=open]>svg]:rotate-90",
+										ownerHasActiveRepo
+											? "text-foreground/70"
+											: "text-muted-foreground/40 hover:text-muted-foreground/70",
+									)}
+								>
+									<ChevronRight className="size-2.5 shrink-0 transition-transform duration-150" />
+									<Avatar className="size-3.5">
+										{ownerAvatarUrl && (
+											<AvatarImage src={ownerAvatarUrl} alt={owner} />
+										)}
+										<AvatarFallback className="text-[7px]">
+											{owner.slice(0, 2).toUpperCase()}
+										</AvatarFallback>
+									</Avatar>
+									<span className="truncate">{owner}</span>
+								</CollapsibleTrigger>
+								<CollapsibleContent>
+									<div className="ml-3 border-l border-sidebar-border/50">
+										{ownerRepos.map((repo) => {
+											const isActive =
+												repo.ownerLogin === activeOwner &&
+												repo.name === activeName;
+											return (
+												<Link
+													key={repo.repositoryId}
+													href={`/${repo.ownerLogin}/${repo.name}`}
+													className={cn(
+														"group flex items-center gap-1 pl-2 pr-2 py-0.5 no-underline transition-colors",
+														isActive
+															? "bg-accent text-foreground border-l-2 border-foreground -ml-px"
+															: "text-muted-foreground hover:text-foreground hover:bg-accent/40",
+													)}
+												>
+													<span className="truncate text-[11px] leading-none">
+														{repo.name}
+													</span>
+												</Link>
+											);
+										})}
+									</div>
+								</CollapsibleContent>
+							</Collapsible>
+						);
+					})}
+			</div>
+		</>
+	);
+}

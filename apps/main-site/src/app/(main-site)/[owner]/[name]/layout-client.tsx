@@ -1,20 +1,26 @@
 "use client";
 
-import { Result, useAtom, useAtomValue } from "@effect-atom/atom-react";
+import { Result, useAtom } from "@effect-atom/atom-react";
 import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import {
-	Avatar,
-	AvatarFallback,
-	AvatarImage,
-} from "@packages/ui/components/avatar";
+	Alert,
+	AlertDescription,
+	AlertTitle,
+} from "@packages/ui/components/alert";
 import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Link } from "@packages/ui/components/link";
 import { cn } from "@packages/ui/lib/utils";
+import { useBilling } from "@packages/ui/rpc/billing";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
-import { useRepoOnboard } from "@packages/ui/rpc/repo-onboard";
+import { Option } from "effect";
 import { usePathname } from "next/navigation";
-import { use, useMemo } from "react";
+import { use, useEffect, useMemo } from "react";
+
+const GITHUB_APP_SLUG = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG ?? "";
+const GITHUB_APP_INSTALL_URL = GITHUB_APP_SLUG
+	? `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`
+	: "";
 
 type RepoOverview = {
 	readonly repositoryId: number;
@@ -134,48 +140,130 @@ function RepoHeader({
 // --- Sync repo from GitHub ---
 
 function SyncRepoFromGitHub({ owner, name }: { owner: string; name: string }) {
-	const onboardClient = useRepoOnboard();
-	const [onboardResult, triggerOnboard] = useAtom(
-		onboardClient.addRepoByUrl.call,
-	);
-
-	const isSyncing = Result.isWaiting(onboardResult);
-	const hasFailed = Result.isFailure(onboardResult);
-	const hasSucceeded = Result.isSuccess(onboardResult);
-
 	return (
 		<div>
 			<h1 className="text-2xl font-bold">
 				{owner}/{name}
 			</h1>
 			<p className="mt-2 text-muted-foreground">
-				This repository hasn&apos;t been synced yet.
+				This repository is not connected yet.
 			</p>
 			<div className="mt-4">
-				{!hasSucceeded && (
-					<Button
-						onClick={() => {
-							triggerOnboard({
-								url: `${owner}/${name}`,
-							});
-						}}
-						disabled={isSyncing}
-					>
-						{isSyncing ? "Syncing from GitHub..." : "Sync from GitHub"}
+				<p className="text-sm text-muted-foreground">
+					Install the GitHub App for this owner to start syncing data.
+				</p>
+				{GITHUB_APP_INSTALL_URL && (
+					<Button asChild className="mt-3">
+						<Link href={GITHUB_APP_INSTALL_URL}>Install GitHub App</Link>
 					</Button>
 				)}
-				{hasSucceeded && (
-					<p className="text-sm text-muted-foreground">
-						Sync started! Data will appear as it loads...
-					</p>
-				)}
-				{hasFailed && (
-					<p className="mt-2 text-sm text-destructive">
-						Failed to sync from GitHub. The repository may not exist or may be
-						private.
-					</p>
-				)}
 			</div>
+		</div>
+	);
+}
+
+function OwnerBillingNotice({ owner }: { owner: string }) {
+	const billing = useBilling();
+	const [statusResult, loadStatus] = useAtom(
+		billing.getOwnerSeatBillingStatus.call,
+	);
+	const [checkoutResult, startCheckout] = useAtom(
+		billing.startOwnerSeatCheckout.call,
+	);
+	const [portalResult, openPortal] = useAtom(
+		billing.openOwnerBillingPortal.call,
+	);
+
+	useEffect(() => {
+		loadStatus({ ownerLogin: owner });
+	}, [loadStatus, owner]);
+
+	useEffect(() => {
+		const checkoutValue = Result.value(checkoutResult);
+		if (Option.isNone(checkoutValue)) return;
+		if (checkoutValue.value.checkoutUrl === null) return;
+		window.location.assign(checkoutValue.value.checkoutUrl);
+	}, [checkoutResult]);
+
+	useEffect(() => {
+		const portalValue = Result.value(portalResult);
+		if (Option.isNone(portalValue)) return;
+		if (portalValue.value.url === null) return;
+		window.location.assign(portalValue.value.url);
+	}, [portalResult]);
+
+	const statusValue = Result.value(statusResult);
+	if (Option.isNone(statusValue)) return null;
+
+	const status = statusValue.value;
+	if (!status.isOrganization || !status.viewerCanManage) return null;
+
+	const isCheckoutWaiting = Result.isWaiting(checkoutResult);
+	const isPortalWaiting = Result.isWaiting(portalResult);
+	const seatLabel = `${status.seatCount} seat${status.seatCount === 1 ? "" : "s"}`;
+
+	if (status.hasAccess) {
+		if (status.freeByHighStarRepo) {
+			return (
+				<div className="mt-4">
+					<Alert>
+						<AlertTitle>Free Access Active</AlertTitle>
+						<AlertDescription>
+							<p>
+								{owner} has a repository above 1,000 stars, so organization
+								billing is waived.
+							</p>
+						</AlertDescription>
+					</Alert>
+				</div>
+			);
+		}
+
+		return (
+			<div className="mt-4">
+				<Button
+					size="sm"
+					variant="outline"
+					disabled={!status.billingConfigured || isPortalWaiting}
+					onClick={() => {
+						openPortal({
+							ownerLogin: owner,
+							returnUrl: window.location.href,
+						});
+					}}
+				>
+					{isPortalWaiting ? "Opening billing..." : `Manage ${owner} billing`}
+				</Button>
+			</div>
+		);
+	}
+
+	if (!status.billingConfigured || !status.requiresCheckout) {
+		return null;
+	}
+
+	return (
+		<div className="mt-4">
+			<Alert>
+				<AlertTitle>Billing Required for Organization Access</AlertTitle>
+				<AlertDescription>
+					<p>
+						{owner} currently has {seatLabel}. Org billing is $50 per seat.
+					</p>
+					<Button
+						size="sm"
+						onClick={() => {
+							startCheckout({
+								ownerLogin: owner,
+								successUrl: window.location.href,
+							});
+						}}
+						disabled={isCheckoutWaiting}
+					>
+						{isCheckoutWaiting ? "Opening checkout..." : "Activate org billing"}
+					</Button>
+				</AlertDescription>
+			</Alert>
 		</div>
 	);
 }
@@ -206,6 +294,7 @@ export function RepoLayoutClient({
 				</Link>
 			</div>
 			<RepoHeader owner={owner} name={name} initialOverview={initialOverview} />
+			<OwnerBillingNotice owner={owner} />
 			<RepoTabNav owner={owner} name={name} />
 			<div className="mt-4">{children}</div>
 		</main>

@@ -11,7 +11,6 @@ import {
 	Command,
 	CommandEmpty,
 	CommandGroup,
-	CommandInput,
 	CommandItem,
 	CommandList,
 } from "@packages/ui/components/command";
@@ -34,15 +33,22 @@ import type { SidebarRepo } from "../@sidebar/sidebar-client";
 
 const EmptyPayload: Record<string, never> = {};
 
+/**
+ * Org + Repo picker used across the entire app.
+ *
+ * - Selecting an org navigates to /:org
+ * - Selecting a repo navigates to /:org/:repo
+ * - `owner`/`name` are null when on the homepage (nothing selected).
+ */
 export function RepoNavSelector({
 	owner,
 	name,
 	activeTab,
 	initialRepos,
 }: {
-	owner: string;
-	name: string;
-	activeTab: string;
+	owner: string | null;
+	name: string | null;
+	activeTab?: string;
 	initialRepos: ReadonlyArray<SidebarRepo>;
 }) {
 	const router = useRouter();
@@ -63,14 +69,52 @@ export function RepoNavSelector({
 	);
 
 	const owners = useMemo(() => Rec.keys(grouped), [grouped]);
-	const ownerRepos = useMemo(() => grouped[owner] ?? [], [grouped, owner]);
-	const currentOwnerAvatar = useMemo(
-		() => ownerRepos[0]?.ownerAvatarUrl ?? null,
-		[ownerRepos],
+	const ownerRepos = useMemo(
+		() => (owner !== null ? (grouped[owner] ?? []) : [...repos]),
+		[grouped, owner, repos],
 	);
+	const currentOwnerAvatar = useMemo(() => {
+		if (owner === null) return null;
+		return (grouped[owner] ?? [])[0]?.ownerAvatarUrl ?? null;
+	}, [grouped, owner]);
 
 	const [orgOpen, setOrgOpen] = useState(false);
 	const [repoOpen, setRepoOpen] = useState(false);
+
+	const handleOwnerSelect = (org: string) => {
+		if (org !== owner) {
+			router.push(`/${org}`);
+		}
+		setOrgOpen(false);
+	};
+
+	const handleAllOrgSelect = () => {
+		router.push("/");
+		setOrgOpen(false);
+	};
+
+	const handleRepoSelect = (repo: SidebarRepo) => {
+		if (repo.ownerLogin !== owner || repo.name !== name) {
+			if (activeTab) {
+				router.push(`/${repo.ownerLogin}/${repo.name}/${activeTab}`);
+			} else {
+				router.push(`/${repo.ownerLogin}/${repo.name}`);
+			}
+		}
+		setRepoOpen(false);
+	};
+
+	const handleAllRepoSelect = () => {
+		if (owner !== null) {
+			router.push(`/${owner}`);
+		} else {
+			router.push("/");
+		}
+		setRepoOpen(false);
+	};
+
+	const ownerLabel = owner ?? "All Orgs";
+	const repoLabel = name ?? "All Repos";
 
 	return (
 		<div className="flex flex-col gap-1.5 px-2 pt-2.5 pb-1.5">
@@ -83,15 +127,17 @@ export function RepoNavSelector({
 						className="h-8 w-full justify-between px-2 gap-1.5 text-xs font-bold tracking-tight"
 					>
 						<span className="flex items-center gap-2 min-w-0">
-							<Avatar className="size-5 shrink-0">
-								{currentOwnerAvatar && (
-									<AvatarImage src={currentOwnerAvatar} alt={owner} />
-								)}
-								<AvatarFallback className="text-[8px]">
-									{owner.slice(0, 2).toUpperCase()}
-								</AvatarFallback>
-							</Avatar>
-							<span className="truncate">{owner}</span>
+							{owner !== null && (
+								<Avatar className="size-5 shrink-0">
+									{currentOwnerAvatar && (
+										<AvatarImage src={currentOwnerAvatar} alt={owner} />
+									)}
+									<AvatarFallback className="text-[8px]">
+										{owner.slice(0, 2).toUpperCase()}
+									</AvatarFallback>
+								</Avatar>
+							)}
+							<span className="truncate">{ownerLabel}</span>
 						</span>
 						{orgOpen ? (
 							<ChevronUpIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
@@ -102,15 +148,24 @@ export function RepoNavSelector({
 				</PopoverTrigger>
 				<PopoverContent className="w-52 p-0" align="start" sideOffset={6}>
 					<Command>
-						<CommandInput
-							placeholder="Search orgs..."
-							className="h-8 text-xs"
-						/>
 						<CommandList>
 							<CommandEmpty className="py-4 text-xs">
 								No orgs found.
 							</CommandEmpty>
 							<CommandGroup>
+								<CommandItem
+									value="__all_orgs__"
+									className="gap-2 text-xs py-1.5"
+									onSelect={handleAllOrgSelect}
+								>
+									<span className="truncate">All Orgs</span>
+									<Check
+										className={cn(
+											"ml-auto size-3.5",
+											owner === null ? "opacity-100" : "opacity-0",
+										)}
+									/>
+								</CommandItem>
 								{owners.map((org) => {
 									const orgRepos = grouped[org] ?? [];
 									const avatarUrl = orgRepos[0]?.ownerAvatarUrl ?? null;
@@ -119,17 +174,7 @@ export function RepoNavSelector({
 											key={org}
 											value={org}
 											className="gap-2 text-xs py-1.5"
-											onSelect={() => {
-												if (org !== owner) {
-													const firstRepo = orgRepos[0];
-													if (firstRepo) {
-														router.push(
-															`/${org}/${firstRepo.name}/${activeTab}`,
-														);
-													}
-												}
-												setOrgOpen(false);
-											}}
+											onSelect={() => handleOwnerSelect(org)}
 										>
 											<Avatar className="size-5 shrink-0">
 												{avatarUrl && <AvatarImage src={avatarUrl} alt={org} />}
@@ -161,7 +206,7 @@ export function RepoNavSelector({
 						size="sm"
 						className="h-8 w-full justify-between px-2 gap-1.5 text-xs font-bold tracking-tight"
 					>
-						<span className="truncate">{name}</span>
+						<span className="truncate">{repoLabel}</span>
 						{repoOpen ? (
 							<ChevronUpIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
 						) : (
@@ -169,37 +214,41 @@ export function RepoNavSelector({
 						)}
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent className="w-52 p-0" align="start" sideOffset={6}>
+				<PopoverContent className="w-56 p-0" align="start" sideOffset={6}>
 					<Command>
-						<CommandInput
-							placeholder="Search repos..."
-							className="h-7 text-[11px]"
-						/>
 						<CommandList>
-							<CommandEmpty className="py-3 text-[11px]">
+							<CommandEmpty className="py-4 text-xs">
 								No repos found.
 							</CommandEmpty>
 							<CommandGroup>
+								<CommandItem
+									value="__all_repos__"
+									className="gap-2 text-xs py-1.5"
+									onSelect={handleAllRepoSelect}
+								>
+									<span className="truncate">All Repos</span>
+									<Check
+										className={cn(
+											"shrink-0 size-3.5",
+											name === null ? "opacity-100" : "opacity-0",
+										)}
+									/>
+								</CommandItem>
 								{ownerRepos.map((repo) => (
 									<CommandItem
 										key={repo.repositoryId}
 										value={repo.name}
-										className="gap-1.5 text-[11px] py-1"
-										onSelect={() => {
-											if (repo.name !== name) {
-												router.push(`/${owner}/${repo.name}/${activeTab}`);
-											}
-											setRepoOpen(false);
-										}}
+										className="gap-2 text-xs py-1.5"
+										onSelect={() => handleRepoSelect(repo)}
 									>
 										<span className="truncate">{repo.name}</span>
 										{(repo.openPrCount > 0 || repo.failingCheckCount > 0) && (
-											<span className="ml-auto shrink-0 text-[9px] text-muted-foreground/40 tabular-nums flex items-center gap-1">
+											<span className="ml-auto shrink-0 text-[10px] text-muted-foreground/40 tabular-nums flex items-center gap-1">
 												{repo.openPrCount > 0 && (
 													<span>{repo.openPrCount} PRs</span>
 												)}
 												{repo.failingCheckCount > 0 && (
-													<span className="text-red-500/60">
+													<span className="text-status-closed/60">
 														{repo.failingCheckCount} failing
 													</span>
 												)}
@@ -207,7 +256,7 @@ export function RepoNavSelector({
 										)}
 										<Check
 											className={cn(
-												"shrink-0 size-3",
+												"shrink-0 size-3.5",
 												repo.name === name ? "opacity-100" : "opacity-0",
 											)}
 										/>

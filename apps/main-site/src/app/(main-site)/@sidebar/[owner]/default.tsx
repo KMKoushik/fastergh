@@ -1,18 +1,22 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
-import { SidebarClient, SidebarSkeleton } from "./sidebar-client";
-import { SidebarRepoList } from "./sidebar-repo-list";
+import { SidebarClient, SidebarSkeleton } from "../sidebar-client";
+import { SidebarRepoList } from "../sidebar-repo-list";
 
-export default function SidebarSlot() {
+/**
+ * Sidebar for the org overview page (/:owner).
+ * Shows the repo list filtered to that org (handled client-side by RepoNavSelector).
+ */
+export default function OrgSidebarDefault() {
 	return (
 		<Suspense fallback={<SidebarSkeleton />}>
-			<SidebarContent />
+			<Content />
 		</Suspense>
 	);
 }
 
-async function SidebarContent() {
+async function Content() {
 	await connection();
 	const initialRepos = await serverQueries.listRepos.queryPromise({});
 	return (

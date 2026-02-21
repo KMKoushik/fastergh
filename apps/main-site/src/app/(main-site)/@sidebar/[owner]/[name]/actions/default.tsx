@@ -1,35 +1,43 @@
+import { connection } from "next/server";
+import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
 import { RepoListShell } from "../../../../_components/repo-list-shell";
 import { WorkflowRunListClient } from "../../../../_components/workflow-run-list-client";
+import { SidebarClient, SidebarSkeleton } from "../../../sidebar-client";
 
 export default function ActionsListDefault(props: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
 	return (
-		<RepoListShell paramsPromise={props.params} activeTab="actions">
-			<ActionsListContent paramsPromise={props.params} />
-		</RepoListShell>
+		<Suspense fallback={<SidebarSkeleton />}>
+			<Content paramsPromise={props.params} />
+		</Suspense>
 	);
 }
 
-async function ActionsListContent({
+async function Content({
 	paramsPromise,
 }: {
 	paramsPromise: Promise<{ owner: string; name: string }>;
 }) {
+	await connection();
 	const { owner, name } = await paramsPromise;
-	const initialData = await serverQueries.listWorkflowRuns
-		.queryPromise({
-			ownerLogin: owner,
-			name,
-		})
-		.catch(() => []);
+	const [initialRepos, initialData] = await Promise.all([
+		serverQueries.listRepos.queryPromise({}),
+		serverQueries.listWorkflowRuns
+			.queryPromise({ ownerLogin: owner, name })
+			.catch(() => []),
+	]);
 
 	return (
-		<WorkflowRunListClient
-			owner={owner}
-			name={name}
-			initialData={initialData}
-		/>
+		<SidebarClient initialRepos={initialRepos}>
+			<RepoListShell paramsPromise={paramsPromise} activeTab="actions">
+				<WorkflowRunListClient
+					owner={owner}
+					name={name}
+					initialData={initialData}
+				/>
+			</RepoListShell>
+		</SidebarClient>
 	);
 }

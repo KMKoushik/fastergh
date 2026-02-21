@@ -7,12 +7,14 @@ import {
 import { Link } from "@packages/ui/components/link";
 import { cn } from "@packages/ui/lib/utils";
 import { type ReactNode, Suspense } from "react";
-import { serverQueries } from "@/lib/server-queries";
-import { RepoNavSelector } from "./repo-nav-selector";
 import { ListSkeleton } from "./skeletons";
 
 type RepoTab = "pulls" | "issues" | "actions" | "code";
 
+/**
+ * Tab bar + body content for repo detail sidebar pages.
+ * Rendered inside the universal SidebarClient shell.
+ */
 export async function RepoListShell({
 	paramsPromise,
 	activeTab,
@@ -23,23 +25,10 @@ export async function RepoListShell({
 	children: ReactNode;
 }) {
 	const { owner, name } = await paramsPromise;
-	const [overview, initialRepos] = await Promise.all([
-		serverQueries.getRepoOverview.queryPromise({
-			ownerLogin: owner,
-			name,
-		}),
-		serverQueries.listRepos.queryPromise({}),
-	]);
 
 	return (
-		<div className="flex h-full flex-col bg-sidebar">
+		<>
 			<div className="shrink-0 border-b border-sidebar-border">
-				<RepoNavSelector
-					owner={owner}
-					name={name}
-					activeTab={activeTab}
-					initialRepos={initialRepos}
-				/>
 				<div className="flex px-0.5 mt-0.5">
 					<Link
 						href={`/${owner}/${name}/pulls`}
@@ -49,9 +38,10 @@ export async function RepoListShell({
 								? "border-foreground text-foreground"
 								: "border-transparent text-muted-foreground hover:text-foreground",
 						)}
+						aria-label="Pull requests"
 					>
 						<GitPullRequest className="size-2.5" />
-						PRs
+						<span className="sr-only">PRs</span>
 					</Link>
 					<Link
 						href={`/${owner}/${name}/issues`}
@@ -61,9 +51,10 @@ export async function RepoListShell({
 								? "border-foreground text-foreground"
 								: "border-transparent text-muted-foreground hover:text-foreground",
 						)}
+						aria-label="Issues"
 					>
 						<TriangleAlert className="size-2.5" />
-						Issues
+						<span className="sr-only">Issues</span>
 					</Link>
 					<Link
 						href={`/${owner}/${name}/actions`}
@@ -73,9 +64,10 @@ export async function RepoListShell({
 								? "border-foreground text-foreground"
 								: "border-transparent text-muted-foreground hover:text-foreground",
 						)}
+						aria-label="CI"
 					>
 						<Play className="size-2.5" />
-						CI
+						<span className="sr-only">CI</span>
 					</Link>
 					<Link
 						href={`/${owner}/${name}/code`}
@@ -85,30 +77,14 @@ export async function RepoListShell({
 								? "border-foreground text-foreground"
 								: "border-transparent text-muted-foreground hover:text-foreground",
 						)}
+						aria-label="Code"
 					>
 						<FileCode2 className="size-2.5" />
-						Code
+						<span className="sr-only">Code</span>
 					</Link>
 				</div>
-				{overview !== null && (
-					<div className="flex items-center gap-1.5 px-2 pb-1 pt-0.5 text-[9px] text-muted-foreground/50 tabular-nums">
-						<span>{overview.openPrCount} PRs</span>
-						<span className="text-muted-foreground/30">&middot;</span>
-						<span>{overview.openIssueCount} issues</span>
-						{overview.failingCheckCount > 0 && (
-							<>
-								<span className="text-muted-foreground/30">&middot;</span>
-								<span className="text-destructive/70 font-medium">
-									{overview.failingCheckCount} failing
-								</span>
-							</>
-						)}
-					</div>
-				)}
 			</div>
-			<div className="flex-1 overflow-y-auto">
-				<Suspense fallback={<ListSkeleton />}>{children}</Suspense>
-			</div>
-		</div>
+			<Suspense fallback={<ListSkeleton />}>{children}</Suspense>
+		</>
 	);
 }

@@ -10,7 +10,6 @@ import {
 } from "@packages/ui/components/icons";
 import { Link } from "@packages/ui/components/link";
 import { Skeleton } from "@packages/ui/components/skeleton";
-import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Option } from "effect";
 import { useMemo } from "react";

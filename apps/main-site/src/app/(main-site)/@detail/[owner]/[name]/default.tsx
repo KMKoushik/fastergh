@@ -1,7 +1,11 @@
-import { GitPullRequest } from "@packages/ui/components/icons";
 import { Suspense } from "react";
 import { SyncProgressOverlay } from "../../../_components/sync-progress-client";
+import { RepoOverviewPanel } from "./repo-overview-client";
 
+/**
+ * Detail panel for the repo overview page (/:owner/:name).
+ * Shows the RepoOverviewPanel with stats, recent PRs, and issues.
+ */
 export default async function RepoDetailDefault({
 	params,
 }: {
@@ -12,14 +16,7 @@ export default async function RepoDetailDefault({
 	return (
 		<Suspense>
 			<SyncProgressOverlay owner={owner} name={name}>
-				<div className="flex h-full items-center justify-center">
-					<div className="text-center">
-						<GitPullRequest className="mx-auto size-10 text-muted-foreground/30" />
-						<p className="mt-3 text-sm text-muted-foreground">
-							Select an item to view details
-						</p>
-					</div>
-				</div>
+				<RepoOverviewPanel owner={owner} name={name} />
 			</SyncProgressOverlay>
 		</Suspense>
 	);

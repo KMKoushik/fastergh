@@ -1,28 +1,51 @@
+import { connection } from "next/server";
+import { Suspense } from "react";
 import { serverQueries } from "@/lib/server-queries";
 import { PrListClient } from "../../../../_components/pr-list-client";
 import { RepoListShell } from "../../../../_components/repo-list-shell";
+import { SidebarClient, SidebarSkeleton } from "../../../sidebar-client";
+import { SidebarRepoList } from "../../../sidebar-repo-list";
 
 export default function PrListSlot(props: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
 	return (
-		<RepoListShell paramsPromise={props.params} activeTab="pulls">
-			<PrListContent paramsPromise={props.params} />
-		</RepoListShell>
+		<Suspense fallback={<SidebarSkeleton />}>
+			<Content paramsPromise={props.params} />
+		</Suspense>
 	);
 }
 
-async function PrListContent({
+async function Content({
 	paramsPromise,
 }: {
 	paramsPromise: Promise<{ owner: string; name: string }>;
 }) {
+	await connection();
 	const { owner, name } = await paramsPromise;
-	const initialData = await serverQueries.listPullRequests.queryPromise({
-		ownerLogin: owner,
-		name,
-		state: "open",
-	});
+	const initialRepos = await serverQueries.listRepos.queryPromise({});
 
-	return <PrListClient owner={owner} name={name} initialData={initialData} />;
+	if (owner.length === 0 || name.length === 0) {
+		return (
+			<SidebarClient initialRepos={initialRepos}>
+				<SidebarRepoList initialRepos={initialRepos} />
+			</SidebarClient>
+		);
+	}
+
+	const initialPrs = await serverQueries.listPullRequests
+		.queryPromise({
+			ownerLogin: owner,
+			name,
+			state: "open",
+		})
+		.catch(() => []);
+
+	return (
+		<SidebarClient initialRepos={initialRepos}>
+			<RepoListShell paramsPromise={paramsPromise} activeTab="pulls">
+				<PrListClient owner={owner} name={name} initialData={initialPrs} />
+			</RepoListShell>
+		</SidebarClient>
+	);
 }
