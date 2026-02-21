@@ -140,9 +140,22 @@ describe("RPC Client", () => {
 			);
 
 			expect(client.sendNotification.call).toBeDefined();
+			expect(typeof client.sendNotification.callAsQuery).toBe("function");
 			expect(typeof client.sendNotification.call).toBe("object");
 			expect(typeof client.sendNotification.callEffect).toBe("function");
 			expect(typeof client.sendNotification.callPromise).toBe("function");
+		});
+
+		it("action callAsQuery returns atom for given payload", () => {
+			const mockApi = { sendNotification: guestbookModule.handlers.sendNotification };
+			const client = createRpcClient<typeof guestbookModule>(
+				mockApi as never,
+				{ url: "https://test.convex.cloud" },
+			);
+
+			const atom = client.sendNotification.callAsQuery({ userId: "user-1" });
+			expect(atom).toBeDefined();
+			expect(Atom.isAtom(atom)).toBe(true);
 		});
 
 		it("mutation endpoints expose imperative mutateEffect and mutatePromise", () => {

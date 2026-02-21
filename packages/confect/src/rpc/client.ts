@@ -136,6 +136,9 @@ export type RpcActionClient<Payload, Success, Error> = {
 	call: Atom.AtomResultFn<Payload, Success, Error | RpcDefectError>;
 	callEffect: (payload: Payload) => Effect.Effect<Success, Error | RpcDefectError>;
 	callPromise: (payload: Payload) => Promise<Success>;
+	callAsQuery: (
+		payload: Payload,
+	) => Atom.Atom<Result.Result<Success, Error | RpcDefectError>>;
 };
 
 type DecorateEndpoint<E, Shared extends Record<string, unknown> = {}> =
@@ -417,6 +420,23 @@ const createSubscriptionAtom = (
 	);
 };
 
+const createActionQueryAtom = (
+	runtime: Atom.AtomRuntime<ConvexClient>,
+	endpointTag: string,
+	convexFn: FunctionReference<"action">,
+	payload: unknown,
+	enablePayloadTelemetryFallback: boolean,
+): Atom.Atom<Result.Result<unknown, unknown>> => {
+	return runtime.atom(
+		createActionEffect(
+			endpointTag,
+			convexFn,
+			payload,
+			enablePayloadTelemetryFallback,
+		),
+	);
+};
+
 const createMutationFn = (
 	runtime: Atom.AtomRuntime<ConvexClient>,
 	endpointTag: string,
@@ -514,6 +534,7 @@ export function createRpcClient<
 
 	const queryFamilies = new Map<string, (payload: unknown) => Atom.Atom<Result.Result<unknown, unknown>>>();
 	const subscriptionFamilies = new Map<string, (payload: unknown) => Atom.Atom<Result.Result<unknown, unknown>>>();
+	const actionQueryFamilies = new Map<string, (payload: unknown) => Atom.Atom<Result.Result<unknown, unknown>>>();
 	const mutationFns = new Map<string, Atom.AtomResultFn<unknown, unknown, unknown>>();
 	const actionFns = new Map<string, Atom.AtomResultFn<unknown, unknown, unknown>>();
 	const paginatedFamilies = new Map<string, (numItems: number, extra: Record<string, unknown>) => Atom.Writable<Atom.PullResult<unknown, unknown>, void>>();
@@ -586,6 +607,25 @@ export function createRpcClient<
 			actionFns.set(tag, fn);
 		}
 		return fn;
+	};
+
+	const getActionQueryFamily = (tag: string) => {
+		let family = actionQueryFamilies.get(tag);
+		if (!family) {
+			const convexFn = convexApi[tag] as FunctionReference<"action">;
+			family = Atom.family((p: unknown) => {
+				const fullPayload = { ...getShared(), ...(p as object) };
+				return createActionQueryAtom(
+					runtime,
+					tag,
+					convexFn,
+					fullPayload,
+					enablePayloadTelemetryFallback,
+				);
+			});
+			actionQueryFamilies.set(tag, family);
+		}
+		return family;
 	};
 
 	const getPaginatedFamily = (tag: string) => {
@@ -680,6 +720,7 @@ export function createRpcClient<
 					mutateEffect,
 					mutatePromise: (payload: unknown) => Effect.runPromise(mutateEffect(payload)),
 					call: getActionFn(prop),
+					callAsQuery: (payload: unknown) => getActionQueryFamily(prop)(payload),
 					callEffect,
 					callPromise: (payload: unknown) => Effect.runPromise(callEffect(payload)),
 					paginated: (numItems: number, extra: Record<string, unknown> = {}) => getPaginatedFamily(prop)(numItems, extra),
