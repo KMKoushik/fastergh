@@ -16,6 +16,7 @@ import {
 	CircleDot,
 	Clock3,
 	FileCode2,
+	GitHubIcon,
 	GitPullRequest,
 	Inbox,
 	ListChecks,
@@ -104,7 +105,7 @@ type NavigationKind =
 	| "issue"
 	| "actions"
 	| "code"
-	| "inbox"
+	| "notifications"
 	| "recent";
 
 type NavigationTarget = {
@@ -168,7 +169,7 @@ function getRecentEntries(): ReadonlyArray<RecentEntry> {
 						entry.kind === "repo" ||
 						entry.kind === "actions" ||
 						entry.kind === "code" ||
-						entry.kind === "inbox"
+						entry.kind === "notifications"
 							? entry.kind
 							: "recent",
 					updatedAt: entry.updatedAt,
@@ -233,7 +234,7 @@ function IconForKind({ kind }: { kind: NavigationKind }) {
 		return <CircleDot className="size-4 text-status-open" />;
 	if (kind === "actions") return <ListChecks className="size-4" />;
 	if (kind === "code") return <FileCode2 className="size-4" />;
-	if (kind === "inbox") return <Inbox className="size-4" />;
+	if (kind === "notifications") return <Inbox className="size-4" />;
 	if (kind === "repo") return <Search className="size-4" />;
 	return <Clock3 className="size-4 text-muted-foreground" />;
 }
@@ -241,9 +242,11 @@ function IconForKind({ kind }: { kind: NavigationKind }) {
 function RepoQuickActions({
 	repo,
 	onSelect,
+	onGoToGitHub,
 }: {
 	repo: { readonly owner: string; readonly name: string };
 	onSelect: (target: NavigationTarget) => void;
+	onGoToGitHub: () => void;
 }) {
 	const base = `/${repo.owner}/${repo.name}`;
 
@@ -280,9 +283,9 @@ function RepoQuickActions({
 		},
 		{
 			path: "/notifications",
-			title: "Open Inbox",
+			title: "Open Notifications",
 			subtitle: "Notifications",
-			kind: "inbox",
+			kind: "notifications",
 		},
 	];
 
@@ -303,6 +306,10 @@ function RepoQuickActions({
 					)}
 				</CommandItem>
 			))}
+			<CommandItem value="go to github github.com" onSelect={onGoToGitHub}>
+				<GitHubIcon className="size-4 text-muted-foreground" />
+				<span>Go to GitHub</span>
+			</CommandItem>
 		</CommandGroup>
 	);
 }
@@ -813,8 +820,10 @@ function QueryDslSummary({
 
 function GlobalQuickViews({
 	onSelect,
+	onGoToGitHub,
 }: {
 	onSelect: (target: NavigationTarget) => void;
+	onGoToGitHub: () => void;
 }) {
 	return (
 		<CommandGroup heading="Quick Views">
@@ -833,18 +842,22 @@ function GlobalQuickViews({
 				<span>Open Workbench</span>
 			</CommandItem>
 			<CommandItem
-				value="view inbox"
+				value="view notifications"
 				onSelect={() =>
 					onSelect({
 						path: "/notifications",
-						title: "Inbox",
+						title: "Notifications",
 						subtitle: "Cross-repo notification queue",
 						kind: "global",
 					})
 				}
 			>
 				<Inbox className="size-4 text-muted-foreground" />
-				<span>Open Inbox</span>
+				<span>Open Notifications</span>
+			</CommandItem>
+			<CommandItem value="go to github github.com" onSelect={onGoToGitHub}>
+				<GitHubIcon className="size-4 text-muted-foreground" />
+				<span>Go to GitHub</span>
 			</CommandItem>
 		</CommandGroup>
 	);
@@ -885,6 +898,11 @@ export function SearchCommand() {
 		[router],
 	);
 
+	const goToGitHub = useCallback(() => {
+		setOpen(false);
+		window.location.replace("https://github.com");
+	}, []);
+
 	const trimmed = debouncedQuery.trim();
 	const parsedQuery = useMemo(
 		() => parseSearchCommandQuery(trimmed),
@@ -919,7 +937,10 @@ export function SearchCommand() {
 			<CommandList>
 				{!hasRepo && !hasQuery && (
 					<>
-						<GlobalQuickViews onSelect={handleSelect} />
+						<GlobalQuickViews
+							onSelect={handleSelect}
+							onGoToGitHub={goToGitHub}
+						/>
 						<CommandSeparator />
 						<RepoResults
 							query=""
@@ -963,7 +984,11 @@ export function SearchCommand() {
 
 				{hasRepo && !hasQuery && (
 					<>
-						<RepoQuickActions repo={repo} onSelect={handleSelect} />
+						<RepoQuickActions
+							repo={repo}
+							onSelect={handleSelect}
+							onGoToGitHub={goToGitHub}
+						/>
 						{recent.length > 0 && (
 							<>
 								<CommandSeparator />

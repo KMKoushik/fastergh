@@ -16,11 +16,7 @@ import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Option } from "effect";
 import { usePathname } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
-
-const GITHUB_APP_SLUG = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG ?? "";
-const GITHUB_APP_INSTALL_URL = GITHUB_APP_SLUG
-	? `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`
-	: "";
+import { InstallGitHubAppButton } from "../../_components/install-github-app-button";
 
 type RepoOverview = {
 	readonly repositoryId: number;
@@ -152,11 +148,7 @@ function SyncRepoFromGitHub({ owner, name }: { owner: string; name: string }) {
 				<p className="text-sm text-muted-foreground">
 					Install the GitHub App for this owner to start syncing data.
 				</p>
-				{GITHUB_APP_INSTALL_URL && (
-					<Button asChild className="mt-3">
-						<Link href={GITHUB_APP_INSTALL_URL}>Install GitHub App</Link>
-					</Button>
-				)}
+				<InstallGitHubAppButton className="mt-3" hideIcon />
 			</div>
 		</div>
 	);

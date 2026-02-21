@@ -23,7 +23,7 @@ import type { SidebarRepo } from "./sidebar-client";
 const EmptyPayload: Record<string, never> = {};
 
 /**
- * Body content for the homepage / inbox sidebar — grouped repo list.
+ * Body content for the homepage / notifications sidebar — grouped repo list.
  * Rendered inside the universal SidebarClient shell.
  */
 export function SidebarRepoList({

@@ -2,7 +2,6 @@
 
 import { useSubscriptionWithInitial } from "@packages/confect/rpc";
 import { Button } from "@packages/ui/components/button";
-import { Download } from "@packages/ui/components/icons";
 import { Skeleton } from "@packages/ui/components/skeleton";
 import { UserButton } from "@packages/ui/components/user-button";
 import { GitHubIcon } from "@packages/ui/icons/index";
@@ -11,14 +10,10 @@ import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
+import { InstallGitHubAppButton } from "../_components/install-github-app-button";
 import { RepoNavSelector } from "../_components/repo-nav-selector";
 
 const EmptyPayload: Record<string, never> = {};
-
-const GITHUB_APP_SLUG = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG ?? "";
-const GITHUB_APP_INSTALL_URL = GITHUB_APP_SLUG
-	? `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`
-	: "";
 
 export type SidebarRepo = {
 	repositoryId: number;
@@ -104,19 +99,12 @@ export function SidebarClient({
 						Star on GitHub
 					</a>
 				</Button>
-				{GITHUB_APP_INSTALL_URL && (
-					<Button
-						asChild
-						size="sm"
-						variant="outline"
-						className="h-6 text-[10px] w-full"
-					>
-						<a href={GITHUB_APP_INSTALL_URL}>
-							<Download className="size-2.5" />
-							Install GitHub App
-						</a>
-					</Button>
-				)}
+				<InstallGitHubAppButton
+					size="sm"
+					variant="outline"
+					className="h-6 text-[10px] w-full"
+					iconClassName="size-2.5"
+				/>
 				{session.data ? (
 					<UserButton />
 				) : (

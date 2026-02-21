@@ -141,7 +141,7 @@ function getNotificationHref(n: NotificationItem): string | null {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function InboxClient({
+export function NotificationsClient({
 	initialNotifications,
 }: {
 	initialNotifications: ReadonlyArray<NotificationItem>;
@@ -195,7 +195,7 @@ export function InboxClient({
 		syncErrorMessage?.includes("not connected") || false;
 
 	if (Result.isInitial(result)) {
-		return <InboxSkeleton />;
+		return <NotificationsSkeleton />;
 	}
 
 	const unread = notifications.filter((n) => n.unread);
@@ -229,7 +229,7 @@ export function InboxClient({
 						<div className="flex items-center gap-2">
 							<Bell className="size-4 text-muted-foreground" />
 							<h1 className="text-lg font-bold tracking-tight text-foreground">
-								Inbox
+								Notifications
 							</h1>
 							{unread.length > 0 && (
 								<Badge
@@ -257,10 +257,10 @@ export function InboxClient({
 				</div>
 
 				<div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-					<InboxStat label="Unread" value={unread.length} />
-					<InboxStat label="Total" value={notifications.length} />
-					<InboxStat label="Repositories" value={repoStats.length} />
-					<InboxStat label="Reasons" value={reasonStats.length} />
+					<NotificationsStat label="Unread" value={unread.length} />
+					<NotificationsStat label="Total" value={notifications.length} />
+					<NotificationsStat label="Repositories" value={repoStats.length} />
+					<NotificationsStat label="Reasons" value={reasonStats.length} />
 				</div>
 
 				{hasSyncError && (
@@ -429,7 +429,7 @@ export function InboxClient({
 									href="/notifications"
 									className="block no-underline text-muted-foreground hover:text-foreground"
 								>
-									Stay in Inbox
+									Stay in Notifications
 								</Link>
 							</div>
 						</InsightCard>
@@ -440,7 +440,7 @@ export function InboxClient({
 	);
 }
 
-function InboxStat({ label, value }: { label: string; value: number }) {
+function NotificationsStat({ label, value }: { label: string; value: number }) {
 	return (
 		<div className="rounded-md border px-3 py-2">
 			<p className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -555,7 +555,7 @@ function NotificationRow({
 // Skeleton
 // ---------------------------------------------------------------------------
 
-export function InboxSkeleton() {
+export function NotificationsSkeleton() {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="px-4 py-4 md:px-6 md:py-5">

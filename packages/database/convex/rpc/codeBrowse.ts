@@ -416,6 +416,37 @@ const getActingUserId = (ctx: {
 /**
  * Resolve repository internal id for a public owner/name pair.
  */
+const findRepositoryByOwnerAndName = (
+	ctx: {
+		db: ConfectQueryCtx["db"] | ConfectMutationCtx["db"];
+	},
+	ownerLogin: string,
+	name: string,
+) =>
+	Effect.gen(function* () {
+		const exactRepo = yield* ctx.db
+			.query("github_repositories")
+			.withIndex("by_ownerLogin_and_name", (q) =>
+				q.eq("ownerLogin", ownerLogin).eq("name", name),
+			)
+			.first();
+
+		if (Option.isSome(exactRepo)) {
+			return exactRepo.value;
+		}
+
+		const normalizedOwnerLogin = ownerLogin.toLowerCase();
+		const normalizedName = name.toLowerCase();
+		const repos = yield* ctx.db.query("github_repositories").collect();
+		const normalizedRepo = repos.find(
+			(repo) =>
+				repo.ownerLogin.toLowerCase() === normalizedOwnerLogin &&
+				repo.name.toLowerCase() === normalizedName,
+		);
+
+		return normalizedRepo ?? null;
+	});
+
 const resolveRepositoryByOwnerAndName = (
 	ctx: {
 		db: ConfectQueryCtx["db"] | ConfectMutationCtx["db"];
@@ -424,20 +455,15 @@ const resolveRepositoryByOwnerAndName = (
 	name: string,
 ) =>
 	Effect.gen(function* () {
-		const repo = yield* ctx.db
-			.query("github_repositories")
-			.withIndex("by_ownerLogin_and_name", (q) =>
-				q.eq("ownerLogin", ownerLogin).eq("name", name),
-			)
-			.first();
+		const repo = yield* findRepositoryByOwnerAndName(ctx, ownerLogin, name);
 
-		if (Option.isNone(repo)) {
+		if (repo === null) {
 			return yield* new RepoNotFound({ ownerLogin, name });
 		}
 
 		return {
-			repositoryId: repo.value.githubRepoId,
-			isPrivate: repo.value.private,
+			repositoryId: repo.githubRepoId,
+			isPrivate: repo.private,
 		};
 	});
 
@@ -495,21 +521,20 @@ const hasRepoPermissionDef = factory.internalQuery({
 getRepoInfoDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectQueryCtx;
-		const repo = yield* ctx.db
-			.query("github_repositories")
-			.withIndex("by_ownerLogin_and_name", (q) =>
-				q.eq("ownerLogin", args.ownerLogin).eq("name", args.name),
-			)
-			.first();
+		const repo = yield* findRepositoryByOwnerAndName(
+			ctx,
+			args.ownerLogin,
+			args.name,
+		);
 
-		if (Option.isNone(repo)) return { found: false };
+		if (repo === null) return { found: false };
 
 		return {
 			found: true,
-			repositoryId: repo.value.githubRepoId,
-			connectedByUserId: repo.value.connectedByUserId ?? null,
-			installationId: repo.value.installationId,
-			isPrivate: repo.value.private,
+			repositoryId: repo.githubRepoId,
+			connectedByUserId: repo.connectedByUserId ?? null,
+			installationId: repo.installationId,
+			isPrivate: repo.private,
 		};
 	}),
 );

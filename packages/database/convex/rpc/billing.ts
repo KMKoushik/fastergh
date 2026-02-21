@@ -11,6 +11,7 @@ import { ConfectActionCtx, ConfectQueryCtx, confectSchema } from "../confect";
 import { GitHubApiClient } from "../shared/githubApi";
 import { getInstallationToken } from "../shared/githubApp";
 import { DatabaseRpcModuleMiddlewares } from "./moduleMiddlewares";
+import { AuthenticatedUser, RequireAuthenticatedMiddleware } from "./security";
 
 const factory = createRpcFactory({ schema: confectSchema });
 const FREE_ORG_STAR_THRESHOLD = 1000;
@@ -36,6 +37,13 @@ const OwnerBillingStatus = Schema.Struct({
 	freeByHighStarRepo: Schema.Boolean,
 });
 
+class BillingAccessDenied extends Schema.TaggedError<BillingAccessDenied>()(
+	"BillingAccessDenied",
+	{
+		ownerLogin: Schema.String,
+	},
+) {}
+
 const ownerHasPermission = (row: {
 	pull: boolean;
 	triage: boolean;
@@ -56,32 +64,51 @@ const getOwnerSeatSnapshotDef = factory.internalQuery({
 	success: OwnerSeatSnapshot,
 });
 
-const getOwnerSeatBillingStatusDef = factory.action({
-	payload: {
-		ownerLogin: Schema.String,
-	},
-	success: OwnerBillingStatus,
-});
+const getOwnerSeatBillingStatusDef = factory
+	.action({
+		payload: {
+			ownerLogin: Schema.String,
+		},
+		success: OwnerBillingStatus,
+	})
+	.middleware(RequireAuthenticatedMiddleware);
 
-const startOwnerSeatCheckoutDef = factory.action({
-	payload: {
-		ownerLogin: Schema.String,
-		successUrl: Schema.optional(Schema.String),
-	},
-	success: Schema.Struct({
-		checkoutUrl: Schema.NullOr(Schema.String),
-		seatCount: Schema.Number,
-	}),
-});
+const startOwnerSeatCheckoutDef = factory
+	.action({
+		payload: {
+			ownerLogin: Schema.String,
+			successUrl: Schema.optional(Schema.String),
+		},
+		success: Schema.Struct({
+			checkoutUrl: Schema.NullOr(Schema.String),
+			seatCount: Schema.Number,
+		}),
+		error: BillingAccessDenied,
+	})
+	.middleware(RequireAuthenticatedMiddleware);
 
-const openOwnerBillingPortalDef = factory.action({
-	payload: {
-		ownerLogin: Schema.String,
-		returnUrl: Schema.optional(Schema.String),
-	},
-	success: Schema.Struct({
-		url: Schema.NullOr(Schema.String),
-	}),
+const openOwnerBillingPortalDef = factory
+	.action({
+		payload: {
+			ownerLogin: Schema.String,
+			returnUrl: Schema.optional(Schema.String),
+		},
+		success: Schema.Struct({
+			url: Schema.NullOr(Schema.String),
+		}),
+		error: BillingAccessDenied,
+	})
+	.middleware(RequireAuthenticatedMiddleware);
+
+const redactedBillingStatus = (ownerLogin: string) => ({
+	ownerLogin,
+	isOrganization: false,
+	seatCount: 0,
+	viewerCanManage: false,
+	billingConfigured: isAutumnConfigured,
+	hasAccess: true,
+	requiresCheckout: false,
+	freeByHighStarRepo: false,
 });
 
 getOwnerSeatSnapshotDef.implement((args) =>
@@ -210,41 +237,19 @@ const checkMissingStarRepos = (
 getOwnerSeatBillingStatusDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
-		const identity = yield* ctx.auth.getUserIdentity();
-
-		if (Option.isNone(identity)) {
-			return {
-				ownerLogin: args.ownerLogin,
-				isOrganization: false,
-				seatCount: 0,
-				viewerCanManage: false,
-				billingConfigured: isAutumnConfigured,
-				hasAccess: true,
-				requiresCheckout: false,
-				freeByHighStarRepo: false,
-			};
-		}
+		const { userId } = yield* AuthenticatedUser;
 
 		const snapshotRaw = yield* ctx.runQuery(
 			internal.rpc.billing.getOwnerSeatSnapshot,
 			{
 				ownerLogin: args.ownerLogin,
-				viewerUserId: identity.value.subject,
+				viewerUserId: userId,
 			},
 		);
 		const snapshot = Schema.decodeUnknownSync(OwnerSeatSnapshot)(snapshotRaw);
 
 		if (!snapshot.isOrganization || !snapshot.viewerCanManage) {
-			return {
-				ownerLogin: snapshot.ownerLogin,
-				isOrganization: snapshot.isOrganization,
-				seatCount: snapshot.seatCount,
-				viewerCanManage: snapshot.viewerCanManage,
-				billingConfigured: isAutumnConfigured,
-				hasAccess: true,
-				requiresCheckout: false,
-				freeByHighStarRepo: false,
-			};
+			return redactedBillingStatus(args.ownerLogin);
 		}
 
 		const hasHighStarRepo =
@@ -310,9 +315,9 @@ getOwnerSeatBillingStatusDef.implement((args) =>
 startOwnerSeatCheckoutDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
-		const identity = yield* ctx.auth.getUserIdentity();
+		const { userId } = yield* AuthenticatedUser;
 
-		if (Option.isNone(identity) || !isAutumnConfigured) {
+		if (!isAutumnConfigured) {
 			return { checkoutUrl: null, seatCount: 0 };
 		}
 
@@ -320,13 +325,13 @@ startOwnerSeatCheckoutDef.implement((args) =>
 			internal.rpc.billing.getOwnerSeatSnapshot,
 			{
 				ownerLogin: args.ownerLogin,
-				viewerUserId: identity.value.subject,
+				viewerUserId: userId,
 			},
 		);
 		const snapshot = Schema.decodeUnknownSync(OwnerSeatSnapshot)(snapshotRaw);
 
 		if (!snapshot.isOrganization || !snapshot.viewerCanManage) {
-			return { checkoutUrl: null, seatCount: snapshot.seatCount };
+			return yield* new BillingAccessDenied({ ownerLogin: args.ownerLogin });
 		}
 
 		const hasHighStarRepo =
@@ -368,9 +373,9 @@ startOwnerSeatCheckoutDef.implement((args) =>
 openOwnerBillingPortalDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
-		const identity = yield* ctx.auth.getUserIdentity();
+		const { userId } = yield* AuthenticatedUser;
 
-		if (Option.isNone(identity) || !isAutumnConfigured) {
+		if (!isAutumnConfigured) {
 			return { url: null };
 		}
 
@@ -378,13 +383,13 @@ openOwnerBillingPortalDef.implement((args) =>
 			internal.rpc.billing.getOwnerSeatSnapshot,
 			{
 				ownerLogin: args.ownerLogin,
-				viewerUserId: identity.value.subject,
+				viewerUserId: userId,
 			},
 		);
 		const snapshot = Schema.decodeUnknownSync(OwnerSeatSnapshot)(snapshotRaw);
 
 		if (!snapshot.isOrganization || !snapshot.viewerCanManage) {
-			return { url: null };
+			return yield* new BillingAccessDenied({ ownerLogin: args.ownerLogin });
 		}
 
 		const autumn = createOrgAutumn(args.ownerLogin);
@@ -416,3 +421,4 @@ export const {
 } = billingModule.handlers;
 export { billingModule };
 export type BillingModule = typeof billingModule;
+export { BillingAccessDenied };
