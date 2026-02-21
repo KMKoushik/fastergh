@@ -79,6 +79,17 @@ const formatYmd = (timestamp: number) => {
 	return `${year}-${month}-${day}`;
 };
 
+const unquote = (value: string) => {
+	const trimmed = value.trim();
+	if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+		return trimmed.slice(1, -1).trim();
+	}
+	return trimmed;
+};
+
+const quoteIfNeeded = (value: string) =>
+	value.includes(" ") ? `"${value.replaceAll('"', '\\"')}"` : value;
+
 export const parseSearchCommandQuery = (
 	rawInput: string,
 	now = Date.now(),
@@ -144,12 +155,22 @@ export const parseSearchCommandQuery = (
 		state.state = "open";
 	});
 
-	eatAll(state, /\bassigned to\s+@?([\w-]+)\b/g, (match) => {
-		state.assignee = match[1] ?? null;
-	});
-	eatAll(state, /\b(by|from|authored by)\s+@?([\w-]+)\b/g, (match) => {
-		state.author = match[2] ?? null;
-	});
+	eatAll(
+		state,
+		/\bassigned to\s+@?(.+?)(?=\s+(by|from|authored by|in|org|label|tag|open|opened|closed|merged|updated|since|past|last)\b|$)/g,
+		(match) => {
+			const assignee = unquote(match[1] ?? "");
+			if (assignee.length > 0) state.assignee = assignee;
+		},
+	);
+	eatAll(
+		state,
+		/\b(by|from|authored by)\s+@?(.+?)(?=\s+(assigned to|in|org|label|tag|open|opened|closed|merged|updated|since|past|last)\b|$)/g,
+		(match) => {
+			const author = unquote(match[2] ?? "");
+			if (author.length > 0) state.author = author;
+		},
+	);
 
 	eatAll(state, /\b(repo|in)\s+([\w.-]+)\/([\w.-]+)\b/g, (match) => {
 		const owner = match[2];
@@ -173,6 +194,23 @@ export const parseSearchCommandQuery = (
 		const label = match[2]?.trim();
 		if (label !== undefined && label.length > 0) state.labels.push(label);
 	});
+
+	if (state.target === null) {
+		eatAll(
+			state,
+			/\b(issues?|prs?|pulls?|pull requests?|repositories?|repos?)\b/g,
+			(match) => {
+				const token = match[0];
+				if (token.startsWith("issue")) state.target = "issue";
+				if (token.startsWith("pr") || token.startsWith("pull")) {
+					state.target = "pr";
+				}
+				if (token.startsWith("repo") || token.startsWith("repositor")) {
+					state.target = "repo";
+				}
+			},
+		);
+	}
 
 	eatAll(
 		state,
@@ -238,8 +276,10 @@ export const buildCanonicalGitHubSearch = (
 	if (query.repo === null && fallbackRepo !== null)
 		parts.push(`repo:${fallbackRepo.owner}/${fallbackRepo.name}`);
 	if (query.org !== null) parts.push(`org:${query.org}`);
-	if (query.author !== null) parts.push(`author:${query.author}`);
-	if (query.assignee !== null) parts.push(`assignee:${query.assignee}`);
+	if (query.author !== null)
+		parts.push(`author:${quoteIfNeeded(query.author)}`);
+	if (query.assignee !== null)
+		parts.push(`assignee:${quoteIfNeeded(query.assignee)}`);
 	for (const label of query.labels) {
 		parts.push(`label:${label.includes(" ") ? `"${label}"` : label}`);
 	}

@@ -40,6 +40,24 @@ describe("parseSearchCommandQuery", () => {
 		expect(parsed.textTokens).toEqual(["fix", "flaky", "tests"]);
 	});
 
+	it("parses multi-word author aliases and quotes in canonical query", () => {
+		const parsed = parseSearchCommandQuery(
+			"Issues by Rhys Sullivan in vercel/next.js",
+		);
+		const canonical = buildCanonicalGitHubSearch(parsed, null);
+
+		expect(parsed.author).toBe("rhys sullivan");
+		expect(parsed.repo).toEqual({ owner: "vercel", name: "next.js" });
+		expect(canonical).toContain('author:"rhys sullivan"');
+	});
+
+	it("detects target keywords outside leading position", () => {
+		const parsed = parseSearchCommandQuery("closed pr by rhys");
+		expect(parsed.target).toBe("pr");
+		expect(parsed.state).toBe("closed");
+		expect(parsed.author).toBe("rhys");
+	});
+
 	it("builds canonical query from parsed filters", () => {
 		const now = new Date("2026-02-21T12:00:00.000Z").getTime();
 		const parsed = parseSearchCommandQuery(

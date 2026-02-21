@@ -34,6 +34,11 @@ import {
 	parseSearchCommandQuery,
 	type SearchCommandQuery,
 } from "./search-command-dsl";
+import {
+	buildQueryChips,
+	QueryBadgeRail,
+	renderFilterIcon,
+} from "./search-command-visuals";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
 	const [debounced, setDebounced] = useState(value);
@@ -223,8 +228,9 @@ function formatRelative(timestamp: number): string {
 
 function IconForKind({ kind }: { kind: NavigationKind }) {
 	if (kind === "pr")
-		return <GitPullRequest className="size-4 text-green-600" />;
-	if (kind === "issue") return <CircleDot className="size-4 text-green-600" />;
+		return <GitPullRequest className="size-4 text-status-open" />;
+	if (kind === "issue")
+		return <CircleDot className="size-4 text-status-open" />;
 	if (kind === "actions") return <ListChecks className="size-4" />;
 	if (kind === "code") return <FileCode2 className="size-4" />;
 	if (kind === "inbox") return <Inbox className="size-4" />;
@@ -403,10 +409,10 @@ function SearchResultRow({
 				className={cn(
 					"text-xs capitalize",
 					item.state === "open"
-						? "text-green-600"
+						? "text-status-open"
 						: item.state === "merged"
-							? "text-blue-600"
-							: "text-muted-foreground",
+							? "text-status-merged"
+							: "text-status-closed",
 				)}
 			>
 				{item.state}
@@ -514,7 +520,11 @@ function GlobalWorkResults({
 }) {
 	const client = useProjectionQueries();
 	const dashboardAtom = useMemo(
-		() => client.getHomeDashboard.subscription({}),
+		() =>
+			client.getHomeDashboard.subscription({
+				scope: "personal",
+				days: 14,
+			}),
 		[client],
 	);
 	const result = useAtomValue(dashboardAtom);
@@ -531,11 +541,11 @@ function GlobalWorkResults({
 	if (Option.isNone(valueOption)) return null;
 
 	const dashboard = valueOption.value;
-	const allItems = [
+	const allItems: Array<DashboardPrItem> = [
 		...dashboard.needsAttentionPrs,
 		...dashboard.yourPrs,
 		...dashboard.recentPrs,
-	] as Array<DashboardPrItem>;
+	];
 
 	const deduped = new Map<string, DashboardPrItem>();
 	for (const item of allItems) {
@@ -587,7 +597,7 @@ function GlobalWorkResults({
 						value={`${item.title} ${item.ownerLogin}/${item.repoName} ${item.number}`}
 						onSelect={() => onSelect(target)}
 					>
-						<GitPullRequest className="size-4 text-green-600" />
+						<GitPullRequest className="size-4 text-status-open" />
 						<div className="min-w-0 flex-1">
 							<div className="truncate text-sm">{item.title}</div>
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -628,11 +638,7 @@ function RepoResults({
 	const result = useAtomValue(reposAtom);
 
 	if (Result.isInitial(result)) {
-		return (
-			<div className="flex items-center justify-center py-4">
-				<Loader2 className="size-4 animate-spin text-muted-foreground" />
-			</div>
-		);
+		return null;
 	}
 
 	const valueOption = Result.value(result);
@@ -678,8 +684,6 @@ function RepoResults({
 						<div className="min-w-0 flex-1">
 							<div className="truncate text-sm">{repo.fullName}</div>
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">
-								<span>{repo.openPrCount} PRs</span>
-								<span>{repo.openIssueCount} issues</span>
 								{repo.failingCheckCount > 0 && (
 									<span className="text-destructive">
 										{repo.failingCheckCount} failing checks
@@ -774,45 +778,31 @@ function QueryDslSummary({
 }) {
 	if (!query.hasDsl) return null;
 
-	const chips: Array<string> = [];
-	if (query.target === "issue") chips.push("issues");
-	if (query.target === "pr") chips.push("prs");
-	if (query.target === "repo") chips.push("repos");
-	if (query.author !== null) chips.push(`by ${query.author}`);
-	if (query.assignee !== null) chips.push(`assigned ${query.assignee}`);
-	if (query.repo !== null)
-		chips.push(`in ${query.repo.owner}/${query.repo.name}`);
-	if (query.org !== null) chips.push(`org ${query.org}`);
-	for (const label of query.labels) chips.push(`label ${label}`);
-	if (query.state !== null) chips.push(query.state);
-	if (query.updatedAfter !== null) {
-		chips.push(
-			`updated since ${new Date(query.updatedAfter).toLocaleDateString(
-				undefined,
-				{
-					year: "numeric",
-					month: "short",
-					day: "numeric",
-				},
-			)}`,
-		);
-	}
+	const chips = buildQueryChips(query);
 
 	const canonical = buildCanonicalGitHubSearch(query, repo);
 
 	return (
-		<CommandGroup heading="Interpreted Query">
-			<CommandItem value={`interpreted ${canonical}`} disabled>
-				<Search className="size-4 text-muted-foreground" />
+		<CommandGroup heading="Matches">
+			<CommandItem
+				value={`interpreted ${canonical}`}
+				disabled
+				className="items-start gap-3 data-[disabled=true]:opacity-100"
+			>
 				<div className="min-w-0 flex-1 space-y-1">
-					<div className="flex flex-wrap items-center gap-1">
+					<div className="flex flex-wrap items-center gap-1.5">
 						{chips.map((chip) => (
-							<Badge key={chip} variant="outline" className="text-[10px]">
-								{chip}
+							<Badge
+								key={chip.key}
+								variant="outline"
+								className="rounded-md border-dashed bg-muted/40 text-[10px]"
+							>
+								{renderFilterIcon(chip.icon)}
+								{chip.label}
 							</Badge>
 						))}
 					</div>
-					<div className="truncate text-xs text-muted-foreground">
+					<div className="truncate font-mono text-[11px] text-muted-foreground">
 						{canonical}
 					</div>
 				</div>
@@ -925,6 +915,7 @@ export function SearchCommand() {
 				value={query}
 				onValueChange={setQuery}
 			/>
+			<QueryBadgeRail rawQuery={query} />
 			<CommandList>
 				{!hasRepo && !hasQuery && (
 					<>
