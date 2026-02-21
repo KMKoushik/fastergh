@@ -356,12 +356,18 @@ const searchIssuesAndPrsDef = factory.query({
 		name: Schema.String,
 		query: Schema.String,
 		limit: Schema.optional(Schema.Number),
+		target: Schema.optional(Schema.Literal("issue", "pr")),
+		authorLogin: Schema.optional(Schema.String),
+		assigneeLogin: Schema.optional(Schema.String),
+		labels: Schema.optional(Schema.Array(Schema.String)),
+		state: Schema.optional(Schema.Literal("open", "closed", "merged")),
+		updatedAfter: Schema.optional(Schema.Number),
 	},
 	success: Schema.Array(
 		Schema.Struct({
 			type: Schema.Literal("pr", "issue"),
 			number: Schema.Number,
-			state: Schema.Literal("open", "closed"),
+			state: Schema.Literal("open", "closed", "merged"),
 			title: Schema.String,
 			authorLogin: Schema.NullOr(Schema.String),
 			githubUpdatedAt: Schema.Number,
@@ -1163,71 +1169,212 @@ searchIssuesAndPrsDef.implement((args) =>
 
 		const ctx = yield* ConfectQueryCtx;
 		const maxResults = args.limit ?? 20;
-		const normalizedQuery = args.query.toLowerCase();
+		const normalizedTokens = args.query
+			.toLowerCase()
+			.split(" ")
+			.map((token) => token.trim())
+			.filter((token) => token.length > 0);
+		const normalizedAuthor = args.authorLogin?.toLowerCase() ?? null;
+		const normalizedAssignee = args.assigneeLogin?.toLowerCase() ?? null;
+		const normalizedLabels = (args.labels ?? [])
+			.map((label) => label.toLowerCase())
+			.filter((label) => label.length > 0);
 
-		const prCandidates = yield* ctx.db
-			.query("github_pull_requests")
-			.withIndex("by_repositoryId_and_state_and_githubUpdatedAt")
-			.order("desc")
-			.take(200);
-		const prResults = prCandidates
-			.filter(
-				(pr) =>
-					pr.repositoryId === repositoryId &&
-					pr.title.toLowerCase().includes(normalizedQuery),
-			)
-			.slice(0, maxResults);
+		const shouldSearchPrs = args.target === undefined || args.target === "pr";
+		const shouldSearchIssues =
+			args.target === undefined || args.target === "issue";
 
-		const issueCandidates = yield* ctx.db
-			.query("github_issues")
-			.withIndex("by_repositoryId_and_state_and_githubUpdatedAt")
-			.order("desc")
-			.take(200);
-		const issueResults = issueCandidates
-			.filter(
-				(issue) =>
-					issue.repositoryId === repositoryId &&
-					!issue.isPullRequest &&
-					issue.title.toLowerCase().includes(normalizedQuery),
-			)
-			.slice(0, maxResults);
+		const loginByUserId = new Map<number, string | null>();
+		const resolveLoginByUserId = (userId: number | null) =>
+			Effect.gen(function* () {
+				if (userId === null) return null;
+				const cached = loginByUserId.get(userId);
+				if (cached !== undefined) return cached;
+				const user = yield* resolveUser(userId);
+				loginByUserId.set(userId, user.login);
+				return user.login;
+			});
 
-		// Resolve authors and merge
-		const prItems = yield* Effect.all(
-			prResults.map((pr) =>
+		const matchesAllTokens = (title: string, body: string | null) => {
+			if (normalizedTokens.length === 0) return true;
+			const lowerTitle = title.toLowerCase();
+			const lowerBody = (body ?? "").toLowerCase();
+			for (const token of normalizedTokens) {
+				if (!lowerTitle.includes(token) && !lowerBody.includes(token)) {
+					return false;
+				}
+			}
+			return true;
+		};
+
+		const matchesAllLabels = (labels: ReadonlyArray<string>) => {
+			if (normalizedLabels.length === 0) return true;
+			if (labels.length === 0) return false;
+			const normalized = labels.map((label) => label.toLowerCase());
+			for (const expected of normalizedLabels) {
+				if (!normalized.includes(expected)) return false;
+			}
+			return true;
+		};
+
+		const prCandidates = shouldSearchPrs
+			? yield* ctx.db
+					.query("github_pull_requests")
+					.withIndex("by_repositoryId_and_state_and_githubUpdatedAt", (q) =>
+						q.eq("repositoryId", repositoryId),
+					)
+					.order("desc")
+					.take(400)
+			: [];
+
+		const prItemsWithNulls = yield* Effect.all(
+			prCandidates.map((pr) =>
 				Effect.gen(function* () {
-					const author = yield* resolveUser(pr.authorUserId);
-					return {
-						type: "pr" as const,
+					const prState: "open" | "closed" | "merged" =
+						pr.state === "closed" && pr.mergedAt !== null ? "merged" : pr.state;
+					if (
+						args.updatedAfter !== undefined &&
+						pr.githubUpdatedAt < args.updatedAfter
+					) {
+						return null;
+					}
+					if (args.state === "merged" && pr.mergedAt === null) return null;
+					if (args.state === "open" && pr.state !== "open") return null;
+					if (args.state === "closed" && pr.state !== "closed") return null;
+					if (!matchesAllTokens(pr.title, pr.body)) return null;
+					if (!matchesAllLabels(pr.labelNames ?? [])) return null;
+
+					const authorLogin = yield* resolveLoginByUserId(pr.authorUserId);
+					if (normalizedAuthor !== null) {
+						if (authorLogin === null) return null;
+						if (authorLogin.toLowerCase() !== normalizedAuthor) return null;
+					}
+
+					if (normalizedAssignee !== null) {
+						if (pr.assigneeUserIds.length === 0) return null;
+						const assigneeLogins = yield* Effect.all(
+							pr.assigneeUserIds.map((userId) => resolveLoginByUserId(userId)),
+							{ concurrency: "unbounded" },
+						);
+						const hasMatchingAssignee = assigneeLogins.some(
+							(login) =>
+								login !== null && login.toLowerCase() === normalizedAssignee,
+						);
+						if (!hasMatchingAssignee) return null;
+					}
+
+					const item: {
+						type: "pr";
+						number: number;
+						state: "open" | "closed" | "merged";
+						title: string;
+						authorLogin: string | null;
+						githubUpdatedAt: number;
+					} = {
+						type: "pr",
 						number: pr.number,
-						state: pr.state,
+						state: prState,
 						title: pr.title,
-						authorLogin: author.login,
+						authorLogin,
 						githubUpdatedAt: pr.githubUpdatedAt,
 					};
+					return item;
 				}),
 			),
 			{ concurrency: "unbounded" },
 		);
 
-		const issueItems = yield* Effect.all(
-			issueResults.map((issue) =>
+		const prItems: Array<{
+			type: "pr";
+			number: number;
+			state: "open" | "closed" | "merged";
+			title: string;
+			authorLogin: string | null;
+			githubUpdatedAt: number;
+		}> = [];
+		for (const item of prItemsWithNulls) {
+			if (item !== null) prItems.push(item);
+		}
+
+		const issueCandidates = shouldSearchIssues
+			? yield* ctx.db
+					.query("github_issues")
+					.withIndex("by_repositoryId_and_state_and_githubUpdatedAt", (q) =>
+						q.eq("repositoryId", repositoryId),
+					)
+					.order("desc")
+					.take(400)
+			: [];
+
+		const issueItemsWithNulls = yield* Effect.all(
+			issueCandidates.map((issue) =>
 				Effect.gen(function* () {
-					const author = yield* resolveUser(issue.authorUserId);
-					return {
-						type: "issue" as const,
+					if (issue.isPullRequest) return null;
+					if (args.state === "merged") return null;
+					if (args.state !== undefined && issue.state !== args.state)
+						return null;
+					if (
+						args.updatedAfter !== undefined &&
+						issue.githubUpdatedAt < args.updatedAfter
+					)
+						return null;
+					if (!matchesAllTokens(issue.title, issue.body)) return null;
+					if (!matchesAllLabels(issue.labelNames)) return null;
+
+					const authorLogin = yield* resolveLoginByUserId(issue.authorUserId);
+					if (normalizedAuthor !== null) {
+						if (authorLogin === null) return null;
+						if (authorLogin.toLowerCase() !== normalizedAuthor) return null;
+					}
+
+					if (normalizedAssignee !== null) {
+						if (issue.assigneeUserIds.length === 0) return null;
+						const assigneeLogins = yield* Effect.all(
+							issue.assigneeUserIds.map((userId) =>
+								resolveLoginByUserId(userId),
+							),
+							{ concurrency: "unbounded" },
+						);
+						const hasMatchingAssignee = assigneeLogins.some(
+							(login) =>
+								login !== null && login.toLowerCase() === normalizedAssignee,
+						);
+						if (!hasMatchingAssignee) return null;
+					}
+
+					const item: {
+						type: "issue";
+						number: number;
+						state: "open" | "closed";
+						title: string;
+						authorLogin: string | null;
+						githubUpdatedAt: number;
+					} = {
+						type: "issue",
 						number: issue.number,
 						state: issue.state,
 						title: issue.title,
-						authorLogin: author.login,
+						authorLogin,
 						githubUpdatedAt: issue.githubUpdatedAt,
 					};
+					return item;
 				}),
 			),
 			{ concurrency: "unbounded" },
 		);
 
-		// Merge and sort by updatedAt descending
+		const issueItems: Array<{
+			type: "issue";
+			number: number;
+			state: "open" | "closed";
+			title: string;
+			authorLogin: string | null;
+			githubUpdatedAt: number;
+		}> = [];
+		for (const item of issueItemsWithNulls) {
+			if (item !== null) issueItems.push(item);
+		}
+
 		const merged = [...prItems, ...issueItems].sort(
 			(a, b) => b.githubUpdatedAt - a.githubUpdatedAt,
 		);

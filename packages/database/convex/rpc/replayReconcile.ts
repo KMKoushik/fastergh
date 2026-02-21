@@ -23,7 +23,7 @@ const factory = createRpcFactory({ schema: confectSchema });
  * Re-process a single webhook event by deliveryId.
  * Resets processState to "pending" and runs the processor inline.
  */
-const replayEventDef = factory.mutation({
+const replayEventDef = factory.internalMutation({
 	payload: { deliveryId: Schema.String },
 	success: Schema.Struct({
 		found: Schema.Boolean,
@@ -35,7 +35,7 @@ const replayEventDef = factory.mutation({
  * Batch retry all failed events (up to limit).
  * Resets their state to "pending" so the next processAllPending call picks them up.
  */
-const retryAllFailedDef = factory.mutation({
+const retryAllFailedDef = factory.internalMutation({
 	payload: { limit: Schema.optional(Schema.Number) },
 	success: Schema.Struct({ resetCount: Schema.Number }),
 });
@@ -43,7 +43,7 @@ const retryAllFailedDef = factory.mutation({
 /**
  * Move a failed event to the dead_letters table and remove from raw events.
  */
-const moveToDeadLetterDef = factory.mutation({
+const moveToDeadLetterDef = factory.internalMutation({
 	payload: {
 		deliveryId: Schema.String,
 		reason: Schema.String,
@@ -54,7 +54,7 @@ const moveToDeadLetterDef = factory.mutation({
 /**
  * List failed webhook events for inspection.
  */
-const listFailedEventsDef = factory.query({
+const listFailedEventsDef = factory.internalQuery({
 	payload: { limit: Schema.optional(Schema.Number) },
 	success: Schema.Array(
 		Schema.Struct({
@@ -71,7 +71,7 @@ const listFailedEventsDef = factory.query({
 /**
  * List dead-lettered events.
  */
-const listDeadLettersDef = factory.query({
+const listDeadLettersDef = factory.internalQuery({
 	payload: { limit: Schema.optional(Schema.Number) },
 	success: Schema.Array(
 		Schema.Struct({
@@ -86,7 +86,7 @@ const listDeadLettersDef = factory.query({
  * Trigger a full re-bootstrap for an already-connected repo.
  * Creates a new sync job and schedules the bootstrap action.
  */
-const reconcileRepoDef = factory.mutation({
+const reconcileRepoDef = factory.internalMutation({
 	payload: {
 		ownerLogin: Schema.String,
 		name: Schema.String,

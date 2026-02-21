@@ -502,6 +502,14 @@ const upsertUserRepoPermissionsDef = factory.internalMutation({
 	}),
 });
 
+const resolveRepositoryIdByNameDef = factory.internalQuery({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+	},
+	success: Schema.NullOr(Schema.Number),
+});
+
 // ---------------------------------------------------------------------------
 // Implementations
 // ---------------------------------------------------------------------------
@@ -634,6 +642,24 @@ listConnectedRepoIdsDef.implement(() =>
 		const ctx = yield* ConfectQueryCtx;
 		const repos = yield* ctx.db.query("github_repositories").take(2000);
 		return repos.map((repo) => repo.githubRepoId);
+	}),
+);
+
+resolveRepositoryIdByNameDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectQueryCtx;
+		const repo = yield* ctx.db
+			.query("github_repositories")
+			.withIndex("by_ownerLogin_and_name", (q) =>
+				q.eq("ownerLogin", args.ownerLogin).eq("name", args.name),
+			)
+			.first();
+
+		if (Option.isNone(repo)) {
+			return null;
+		}
+
+		return repo.value.githubRepoId;
 	}),
 );
 
@@ -1016,6 +1042,34 @@ const resolveActionsGitHubClient = () =>
 		);
 	});
 
+const resolveRepositoryIdForWrite = (
+	ctx: { runQuery: ConfectActionCtx["runQuery"] },
+	ownerLogin: string,
+	name: string,
+) =>
+	Effect.gen(function* () {
+		const repositoryIdResult = yield* ctx.runQuery(
+			internal.rpc.githubActions.resolveRepositoryIdByName,
+			{
+				ownerLogin,
+				name,
+			},
+		);
+
+		const repositoryId = Schema.decodeUnknownSync(Schema.NullOr(Schema.Number))(
+			repositoryIdResult,
+		);
+
+		if (repositoryId === null) {
+			return yield* new ActionsControlError({
+				status: 404,
+				message: `Repository ${ownerLogin}/${name} is not connected`,
+			});
+		}
+
+		return repositoryId;
+	});
+
 listRepoAssigneesDef.implement((args) =>
 	Effect.gen(function* () {
 		const github = yield* resolveActionsGitHubClient();
@@ -1147,6 +1201,11 @@ createPrReviewCommentDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
 		const github = yield* resolveActionsGitHubClient();
+		const repositoryId = yield* resolveRepositoryIdForWrite(
+			ctx,
+			args.ownerLogin,
+			args.name,
+		);
 
 		const payload: Record<string, string | number> = {
 			body: args.body,
@@ -1172,7 +1231,7 @@ createPrReviewCommentDef.implement((args) =>
 		);
 
 		yield* ctx.runMutation(internal.rpc.onDemandSync.upsertPrReviewComments, {
-			repositoryId: args.repositoryId,
+			repositoryId,
 			prNumber: args.prNumber,
 			reviewComments: [
 				{
@@ -1204,6 +1263,11 @@ createPrReviewCommentReplyDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
 		const github = yield* resolveActionsGitHubClient();
+		const repositoryId = yield* resolveRepositoryIdForWrite(
+			ctx,
+			args.ownerLogin,
+			args.name,
+		);
 
 		const comment = yield* postReviewCommentEndpoint(
 			github,
@@ -1214,7 +1278,7 @@ createPrReviewCommentReplyDef.implement((args) =>
 		);
 
 		yield* ctx.runMutation(internal.rpc.onDemandSync.upsertPrReviewComments, {
-			repositoryId: args.repositoryId,
+			repositoryId,
 			prNumber: args.prNumber,
 			reviewComments: [
 				{
@@ -1400,6 +1464,7 @@ const githubActionsModule = makeRpcModule(
 		listConnectedRepoIds: listConnectedRepoIdsDef,
 		listStalePermissionUserIds: listStalePermissionUserIdsDef,
 		upsertUserRepoPermissions: upsertUserRepoPermissionsDef,
+		resolveRepositoryIdByName: resolveRepositoryIdByNameDef,
 		fetchPrDiff: fetchPrDiffDef,
 		fetchWorkflowJobLogs: fetchWorkflowJobLogsDef,
 		listRepoAssignees: listRepoAssigneesDef,
@@ -1423,6 +1488,7 @@ export const {
 	listConnectedRepoIds,
 	listStalePermissionUserIds,
 	upsertUserRepoPermissions,
+	resolveRepositoryIdByName,
 	fetchPrDiff,
 	fetchWorkflowJobLogs,
 	listRepoAssignees,

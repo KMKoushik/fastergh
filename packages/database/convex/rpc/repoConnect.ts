@@ -36,7 +36,7 @@ class InvalidRepoFormat extends Schema.TaggedError<InvalidRepoFormat>()(
  *
  * Idempotent: if the repo is already connected, returns an error.
  */
-const connectRepoDef = factory.mutation({
+const connectRepoDef = factory.internalMutation({
 	payload: {
 		/** Full repo name, e.g. "RhysSullivan/quickhub-test" */
 		fullName: Schema.String,

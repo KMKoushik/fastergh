@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
 		NEXT_PUBLIC_CONVEX_URL: process.env.CONVEX_URL,
 		NEXT_PUBLIC_CONVEX_SITE_URL: process.env.CONVEX_SITE_URL,
 		NEXT_PUBLIC_GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG,
+		NEXT_PUBLIC_POSTHOG_KEY: process.env.POSTHOG_KEY,
+		NEXT_PUBLIC_POSTHOG_HOST: process.env.POSTHOG_HOST,
 	},
 	transpilePackages: ["@packages/ui", "@packages/database"],
 	images: {
