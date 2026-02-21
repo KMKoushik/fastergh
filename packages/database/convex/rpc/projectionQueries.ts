@@ -33,6 +33,7 @@ const listReposDef = factory.query({
 			repositoryId: Schema.Number,
 			fullName: Schema.String,
 			ownerLogin: Schema.String,
+			ownerAvatarUrl: Schema.NullOr(Schema.String),
 			name: Schema.String,
 			openPrCount: Schema.Number,
 			openIssueCount: Schema.Number,
@@ -392,6 +393,7 @@ const getWorkflowRunDetailDef = factory.query({
 		Schema.Struct({
 			repositoryId: Schema.Number,
 			githubRunId: Schema.Number,
+			workflowId: Schema.Number,
 			workflowName: Schema.NullOr(Schema.String),
 			runNumber: Schema.Number,
 			runAttempt: Schema.Number,
@@ -771,10 +773,15 @@ listReposDef.implement(() =>
 			if (access._tag === "Left") continue;
 
 			const counts = yield* computeRepoCounts(repo.githubRepoId);
+
+			// Resolve owner avatar — check github_users first, then github_organizations
+			const ownerAvatarUrl = yield* resolveOwnerAvatarUrl(repo.ownerId);
+
 			results.push({
 				repositoryId: repo.githubRepoId,
 				fullName: repo.fullName,
 				ownerLogin: repo.ownerLogin,
+				ownerAvatarUrl,
 				name: repo.name,
 				openPrCount: counts.openPrCount,
 				openIssueCount: counts.openIssueCount,
@@ -1544,6 +1551,26 @@ getHomeDashboardDef.implement(() =>
 		};
 	}),
 );
+
+// -- Helper: resolve owner avatar by ownerId (user or org) ------------------
+
+const resolveOwnerAvatarUrl = (ownerId: number) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectQueryCtx;
+		// Try github_users first (covers User, Bot, and Organization types)
+		const user = yield* ctx.db
+			.query("github_users")
+			.withIndex("by_githubUserId", (q) => q.eq("githubUserId", ownerId))
+			.first();
+		if (Option.isSome(user)) return user.value.avatarUrl;
+		// Fall back to github_organizations
+		const org = yield* ctx.db
+			.query("github_organizations")
+			.withIndex("by_githubOrgId", (q) => q.eq("githubOrgId", ownerId))
+			.first();
+		if (Option.isSome(org)) return org.value.avatarUrl;
+		return null;
+	});
 
 // -- Helper: resolve GitHub user login + avatar by userId -------------------
 
@@ -2343,6 +2370,7 @@ getWorkflowRunDetailDef.implement((args) =>
 		return {
 			repositoryId,
 			githubRunId: run.value.githubRunId,
+			workflowId: run.value.workflowId,
 			workflowName: run.value.workflowName,
 			runNumber: run.value.runNumber,
 			runAttempt: run.value.runAttempt,

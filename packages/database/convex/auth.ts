@@ -5,6 +5,7 @@ import {
 } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { type BetterAuthOptions, betterAuth } from "better-auth/minimal";
+import { genericOAuth } from "better-auth/plugins";
 import { type GenericDataModel, queryGeneric } from "convex/server";
 import { components, internal } from "./_generated/api";
 import authConfig from "./auth.config";
@@ -80,6 +81,58 @@ export const createAuthOptions = (ctx: GenericCtx) => {
 			},
 		},
 		plugins: [
+			genericOAuth({
+				config: [
+					{
+						providerId: "github-notifications",
+						clientId: process.env.GITHUB_NOTIFICATIONS_CLIENT_ID ?? "",
+						clientSecret: process.env.GITHUB_NOTIFICATIONS_CLIENT_SECRET ?? "",
+						authorizationUrl: "https://github.com/login/oauth/authorize",
+						tokenUrl: "https://github.com/login/oauth/access_token",
+						scopes: ["notifications", "user:email"],
+						getUserInfo: async (token) => {
+							const [userRes, emailsRes] = await Promise.all([
+								fetch("https://api.github.com/user", {
+									headers: {
+										Authorization: `Bearer ${token.accessToken}`,
+									},
+								}),
+								fetch("https://api.github.com/user/emails", {
+									headers: {
+										Authorization: `Bearer ${token.accessToken}`,
+									},
+								}),
+							]);
+							const user = (await userRes.json()) as {
+								id: number;
+								login: string;
+								name: string | null;
+								avatar_url: string;
+								email: string | null;
+							};
+							const emails = (await emailsRes.json()) as Array<{
+								email: string;
+								primary: boolean;
+								verified: boolean;
+							}>;
+							const primaryEmail =
+								emails.find((e) => e.primary && e.verified)?.email ??
+								emails.find((e) => e.verified)?.email ??
+								user.email;
+							if (!primaryEmail) return null;
+							return {
+								id: String(user.id),
+								name: user.name ?? user.login,
+								email: primaryEmail,
+								emailVerified: emails.some(
+									(e) => e.email === primaryEmail && e.verified,
+								),
+								image: user.avatar_url,
+							};
+						},
+					},
+				],
+			}),
 			convex({
 				authConfig,
 			}),

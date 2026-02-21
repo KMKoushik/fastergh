@@ -14,6 +14,7 @@ import {
 } from "@packages/ui/components/command";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
+import { useHotkey } from "@tanstack/react-hotkeys";
 import { Option } from "effect";
 import {
 	CircleDot,
@@ -768,17 +769,10 @@ export function SearchCommand() {
 	const repo = useRepoFromPathname();
 	const router = useRouter();
 
-	useEffect(() => {
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
-				event.preventDefault();
-				setOpen((value) => !value);
-			}
-		}
-
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, []);
+	useHotkey("Mod+K", (event) => {
+		event.preventDefault();
+		setOpen((value) => !value);
+	});
 
 	useEffect(() => {
 		if (!open) {

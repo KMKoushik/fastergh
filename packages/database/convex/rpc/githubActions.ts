@@ -193,6 +193,85 @@ const cancelWorkflowRunDef = factory.action({
 });
 
 /**
+ * Trigger a workflow via workflow_dispatch.
+ * POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches
+ */
+const dispatchWorkflowDef = factory.action({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+		workflowId: Schema.Number,
+		ref: Schema.String,
+	},
+	success: Schema.Struct({ accepted: Schema.Boolean }),
+	error: Schema.Union(NotAuthenticated, ActionsControlError),
+});
+
+const PullRequestCommentSideSchema = Schema.Literal("LEFT", "RIGHT");
+
+const createPrReviewCommentDef = factory.action({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+		repositoryId: Schema.Number,
+		prNumber: Schema.Number,
+		commitSha: Schema.optional(Schema.String),
+		body: Schema.String,
+		path: Schema.String,
+		line: Schema.Number,
+		side: PullRequestCommentSideSchema,
+		startLine: Schema.optional(Schema.Number),
+		startSide: Schema.optional(PullRequestCommentSideSchema),
+	},
+	success: Schema.Struct({
+		accepted: Schema.Boolean,
+		githubReviewCommentId: Schema.Number,
+	}),
+	error: Schema.Union(NotAuthenticated, ActionsControlError),
+});
+
+const createPrReviewCommentReplyDef = factory.action({
+	payload: {
+		ownerLogin: Schema.String,
+		name: Schema.String,
+		repositoryId: Schema.Number,
+		prNumber: Schema.Number,
+		inReplyToGithubReviewCommentId: Schema.Number,
+		body: Schema.String,
+	},
+	success: Schema.Struct({
+		accepted: Schema.Boolean,
+		githubReviewCommentId: Schema.Number,
+	}),
+	error: Schema.Union(NotAuthenticated, ActionsControlError),
+});
+
+const GitHubReviewCommentResponseSchema = Schema.Struct({
+	id: Schema.Number,
+	pull_request_review_id: Schema.optional(Schema.NullOr(Schema.Number)),
+	in_reply_to_id: Schema.optional(Schema.NullOr(Schema.Number)),
+	user: Schema.optional(
+		Schema.NullOr(
+			Schema.Struct({
+				id: Schema.Number,
+			}),
+		),
+	),
+	body: Schema.String,
+	path: Schema.optional(Schema.NullOr(Schema.String)),
+	line: Schema.optional(Schema.NullOr(Schema.Number)),
+	original_line: Schema.optional(Schema.NullOr(Schema.Number)),
+	start_line: Schema.optional(Schema.NullOr(Schema.Number)),
+	side: Schema.optional(Schema.NullOr(Schema.String)),
+	start_side: Schema.optional(Schema.NullOr(Schema.String)),
+	commit_id: Schema.optional(Schema.NullOr(Schema.String)),
+	original_commit_id: Schema.optional(Schema.NullOr(Schema.String)),
+	html_url: Schema.optional(Schema.NullOr(Schema.String)),
+	created_at: Schema.String,
+	updated_at: Schema.String,
+});
+
+/**
  * Fetch the unified diff for a pull request from the GitHub API.
  * Returns raw unified diff text (or null on 404/error).
  */
@@ -814,21 +893,31 @@ fetchWorkflowJobLogsDef.implement((args) =>
 const callActionsControlEndpoint = (
 	github: IGitHubApiClient,
 	path: string,
+	payload?: Readonly<Record<string, string | number | boolean | null>>,
 ): Effect.Effect<{ accepted: boolean }, ActionsControlError> =>
 	Effect.gen(function* () {
-		const response = yield* github.httpClient
-			.execute(HttpClientRequest.post(path))
-			.pipe(
-				Effect.catchAll(
-					(e) =>
-						new ActionsControlError({
-							status: 0,
-							message: `Request failed: ${e.message}`,
-						}),
-				),
-			);
+		const request =
+			payload === undefined
+				? HttpClientRequest.post(path)
+				: HttpClientRequest.post(path).pipe(
+						HttpClientRequest.bodyUnsafeJson(payload),
+					);
 
-		if (response.status === 202 || response.status === 201) {
+		const response = yield* github.httpClient.execute(request).pipe(
+			Effect.catchAll(
+				(e) =>
+					new ActionsControlError({
+						status: 0,
+						message: `Request failed: ${e.message}`,
+					}),
+			),
+		);
+
+		if (
+			response.status === 202 ||
+			response.status === 201 ||
+			response.status === 204
+		) {
 			return { accepted: true };
 		}
 
@@ -849,6 +938,60 @@ const callActionsControlEndpoint = (
 		}
 
 		return yield* new ActionsControlError({ status: response.status, message });
+	});
+
+const isoTimestampToMs = (value: string): number => {
+	const parsed = Date.parse(value);
+	if (Number.isNaN(parsed)) return Date.now();
+	return parsed;
+};
+
+const postReviewCommentEndpoint = (
+	github: IGitHubApiClient,
+	path: string,
+	payload: Readonly<Record<string, string | number>>,
+) =>
+	Effect.gen(function* () {
+		const response = yield* github.httpClient
+			.execute(
+				HttpClientRequest.post(path).pipe(
+					HttpClientRequest.bodyUnsafeJson(payload),
+				),
+			)
+			.pipe(
+				Effect.catchAll(
+					(e) =>
+						new ActionsControlError({
+							status: 0,
+							message: `Request failed: ${e.message}`,
+						}),
+				),
+			);
+
+		if (response.status !== 200 && response.status !== 201) {
+			const errorBody = yield* Effect.orElseSucceed(response.text, () => "");
+			const trimmed = errorBody.trim();
+			const message =
+				trimmed.length > 0
+					? `GitHub returned ${response.status}: ${trimmed}`
+					: `GitHub returned ${response.status}`;
+			return yield* new ActionsControlError({
+				status: response.status,
+				message,
+			});
+		}
+
+		return yield* HttpClientResponse.schemaBodyJson(
+			GitHubReviewCommentResponseSchema,
+		)(response).pipe(
+			Effect.mapError(
+				() =>
+					new ActionsControlError({
+						status: response.status,
+						message: "GitHub returned an unreadable review comment payload",
+					}),
+			),
+		);
 	});
 
 /**
@@ -986,6 +1129,116 @@ cancelWorkflowRunDef.implement((args) =>
 			github,
 			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/actions/runs/${String(args.githubRunId)}/cancel`,
 		);
+	}),
+);
+
+dispatchWorkflowDef.implement((args) =>
+	Effect.gen(function* () {
+		const github = yield* resolveActionsGitHubClient();
+		return yield* callActionsControlEndpoint(
+			github,
+			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/actions/workflows/${String(args.workflowId)}/dispatches`,
+			{ ref: args.ref },
+		);
+	}),
+);
+
+createPrReviewCommentDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectActionCtx;
+		const github = yield* resolveActionsGitHubClient();
+
+		const payload: Record<string, string | number> = {
+			body: args.body,
+			path: args.path,
+			line: args.line,
+			side: args.side,
+		};
+
+		if (args.commitSha !== undefined) {
+			payload.commit_id = args.commitSha;
+		}
+		if (args.startLine !== undefined) {
+			payload.start_line = args.startLine;
+		}
+		if (args.startSide !== undefined) {
+			payload.start_side = args.startSide;
+		}
+
+		const comment = yield* postReviewCommentEndpoint(
+			github,
+			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/pulls/${String(args.prNumber)}/comments`,
+			payload,
+		);
+
+		yield* ctx.runMutation(internal.rpc.onDemandSync.upsertPrReviewComments, {
+			repositoryId: args.repositoryId,
+			prNumber: args.prNumber,
+			reviewComments: [
+				{
+					githubReviewCommentId: comment.id,
+					githubReviewId: comment.pull_request_review_id ?? null,
+					inReplyToGithubReviewCommentId: comment.in_reply_to_id ?? null,
+					authorUserId: comment.user?.id ?? null,
+					body: comment.body,
+					path: comment.path ?? null,
+					line: comment.line ?? null,
+					originalLine: comment.original_line ?? null,
+					startLine: comment.start_line ?? null,
+					side: comment.side ?? null,
+					startSide: comment.start_side ?? null,
+					commitSha: comment.commit_id ?? null,
+					originalCommitSha: comment.original_commit_id ?? null,
+					htmlUrl: comment.html_url ?? null,
+					createdAt: isoTimestampToMs(comment.created_at),
+					updatedAt: isoTimestampToMs(comment.updated_at),
+				},
+			],
+		});
+
+		return { accepted: true, githubReviewCommentId: comment.id };
+	}),
+);
+
+createPrReviewCommentReplyDef.implement((args) =>
+	Effect.gen(function* () {
+		const ctx = yield* ConfectActionCtx;
+		const github = yield* resolveActionsGitHubClient();
+
+		const comment = yield* postReviewCommentEndpoint(
+			github,
+			`/repos/${encodeURIComponent(args.ownerLogin)}/${encodeURIComponent(args.name)}/pulls/${String(args.prNumber)}/comments/${String(args.inReplyToGithubReviewCommentId)}/replies`,
+			{
+				body: args.body,
+			},
+		);
+
+		yield* ctx.runMutation(internal.rpc.onDemandSync.upsertPrReviewComments, {
+			repositoryId: args.repositoryId,
+			prNumber: args.prNumber,
+			reviewComments: [
+				{
+					githubReviewCommentId: comment.id,
+					githubReviewId: comment.pull_request_review_id ?? null,
+					inReplyToGithubReviewCommentId: comment.in_reply_to_id ?? null,
+					authorUserId: comment.user?.id ?? null,
+					body: comment.body,
+					path: comment.path ?? null,
+					line: comment.line ?? null,
+					originalLine: comment.original_line ?? null,
+					startLine: comment.start_line ?? null,
+					side: comment.side ?? null,
+					startSide: comment.start_side ?? null,
+					commitSha: comment.commit_id ?? null,
+					originalCommitSha: comment.original_commit_id ?? null,
+					htmlUrl: comment.html_url ?? null,
+					createdAt: isoTimestampToMs(comment.created_at),
+					updatedAt: isoTimestampToMs(comment.updated_at),
+				},
+			],
+		});
+
+		return { accepted: true, githubReviewCommentId: comment.id };
 	}),
 );
 
@@ -1156,6 +1409,9 @@ const githubActionsModule = makeRpcModule(
 		rerunWorkflowRun: rerunWorkflowRunDef,
 		rerunFailedJobs: rerunFailedJobsDef,
 		cancelWorkflowRun: cancelWorkflowRunDef,
+		dispatchWorkflow: dispatchWorkflowDef,
+		createPrReviewComment: createPrReviewCommentDef,
+		createPrReviewCommentReply: createPrReviewCommentReplyDef,
 	},
 	{ middlewares: DatabaseRpcTelemetryLayer },
 );
@@ -1175,6 +1431,9 @@ export const {
 	rerunWorkflowRun,
 	rerunFailedJobs,
 	cancelWorkflowRun,
+	dispatchWorkflow,
+	createPrReviewComment,
+	createPrReviewCommentReply,
 } = githubActionsModule.handlers;
 export { githubActionsModule, NotAuthenticated, ActionsControlError };
 export type GithubActionsModule = typeof githubActionsModule;

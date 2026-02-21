@@ -17,8 +17,9 @@ import {
 	ConfectQueryCtx,
 	confectSchema,
 } from "../confect";
+import type { Thread } from "../shared/generated_github_client";
 import { GitHubApiClient } from "../shared/githubApi";
-import { lookupGitHubTokenByUserIdConfect } from "../shared/githubToken";
+import { lookupTokenByProviderConfect } from "../shared/githubToken";
 import { DatabaseRpcTelemetryLayer } from "./telemetry";
 
 const factory = createRpcFactory({ schema: confectSchema });
@@ -141,6 +142,37 @@ const toSubjectType = (s: string): ValidSubjectType =>
 	SUBJECT_TYPE_MAP[s] ?? "Issue";
 
 const toReason = (s: string): ValidReason => REASON_MAP[s] ?? "subscribed";
+
+/** Extract a human-readable message from a GitHub API error. */
+const formatGitHubError = (error: object): string => {
+	// Spread into a plain record for uniform property access
+	const raw = Object.fromEntries(Object.entries(error));
+	const tag = "_tag" in raw ? String(raw._tag) : "Unknown";
+	const cause =
+		typeof raw.cause === "object" && raw.cause !== null
+			? (raw.cause as Record<string, unknown>)
+			: null;
+	const causeMsg = cause?.message
+		? String(cause.message)
+		: cause?.status
+			? `status=${String(cause.status)}`
+			: null;
+	const status =
+		typeof raw.response === "object" &&
+		raw.response !== null &&
+		"status" in (raw.response as Record<string, unknown>)
+			? String((raw.response as Record<string, unknown>).status)
+			: null;
+	const detail = [
+		tag,
+		status ? `HTTP ${status}` : null,
+		causeMsg,
+		cause?.documentation_url ? String(cause.documentation_url) : null,
+	]
+		.filter(Boolean)
+		.join(": ");
+	return detail || `Unknown error: ${JSON.stringify(error)}`;
+};
 
 // ---------------------------------------------------------------------------
 // Endpoint definitions
@@ -270,36 +302,59 @@ syncNotificationsDef.implement(() =>
 		}
 		const userId = identity.value.subject;
 
-		// Resolve the GitHub token
-		const token = yield* lookupGitHubTokenByUserIdConfect(
+		// Resolve the classic OAuth token for notifications
+		// GitHub App tokens (ghu_) can't access /notifications — need a
+		// classic OAuth token from the "github-notifications" provider.
+		const token = yield* lookupTokenByProviderConfect(
 			ctx.runQuery,
+			"github-notifications",
 			userId,
 		).pipe(
 			Effect.catchTag(
 				"NoGitHubTokenError",
-				(e) => new NotAuthenticated({ reason: e.reason }),
+				() =>
+					new NotAuthenticated({
+						reason:
+							"GitHub notifications access not connected. Please connect your GitHub account for notifications.",
+					}),
 			),
 		);
+
 		const gh = yield* Effect.provide(
 			GitHubApiClient,
 			GitHubApiClient.fromToken(token),
 		);
 
-		// Fetch notifications from GitHub using typed client
-		const threads = yield* gh.client
-			.activityListNotificationsForAuthenticatedUser({
-				all: false,
-				per_page: 50,
-			})
-			.pipe(
-				Effect.catchAll(
-					(error) => new GitHubSyncFailed({ reason: String(error) }),
-				),
-			);
+		// Fetch all notification pages from GitHub
+		const PAGE_SIZE = 50;
+		const MAX_PAGES = 10; // safety cap: 500 notifications max
+		const allThreads: Array<Thread> = [];
+
+		for (let page = 1; page <= MAX_PAGES; page++) {
+			const threads = yield* gh.client
+				.activityListNotificationsForAuthenticatedUser({
+					all: false,
+					per_page: PAGE_SIZE,
+					page,
+				})
+				.pipe(
+					Effect.catchAll(
+						(error) =>
+							new GitHubSyncFailed({
+								reason: formatGitHubError(error),
+							}),
+					),
+				);
+
+			allThreads.push(...threads);
+
+			// If we got fewer than PAGE_SIZE, there are no more pages
+			if (threads.length < PAGE_SIZE) break;
+		}
 
 		// Map typed Thread objects to our notification shape
-		const parsed = threads.map((n) => {
-			const subjectUrl = n.subject.url;
+		const parsed = allThreads.map((n) => {
+			const subjectUrl = n.subject.url ?? null;
 			return {
 				githubNotificationId: n.id,
 				repositoryFullName: n.repository.full_name,
@@ -311,7 +366,8 @@ syncNotificationsDef.implement(() =>
 				unread: n.unread,
 				updatedAt: isoToMs(n.updated_at),
 				lastReadAt: n.last_read_at !== null ? isoToMs(n.last_read_at) : null,
-				entityNumber: subjectUrl ? parseEntityNumber(subjectUrl) : null,
+				entityNumber:
+					subjectUrl !== null ? parseEntityNumber(subjectUrl) : null,
 			};
 		});
 
@@ -414,6 +470,24 @@ upsertNotificationsDef.implement((args) =>
 			upsertedCount++;
 		}
 
+		// Mark stale notifications as read: if GitHub no longer returns them
+		// with `all: false`, they've been read/dismissed externally.
+		const syncedIds = new Set(
+			args.notifications.map((n) => n.githubNotificationId),
+		);
+		const allLocal = yield* ctx.db
+			.query("github_notifications")
+			.withIndex("by_userId_and_updatedAt", (q) => q.eq("userId", args.userId))
+			.collect();
+		for (const local of allLocal) {
+			if (local.unread && !syncedIds.has(local.githubNotificationId)) {
+				yield* ctx.db.patch(local._id, {
+					unread: false,
+					lastReadAt: Date.now(),
+				});
+			}
+		}
+
 		return { upsertedCount };
 	}),
 );
@@ -422,8 +496,9 @@ markNotificationReadRemoteDef.implement((args) =>
 	Effect.gen(function* () {
 		const ctx = yield* ConfectActionCtx;
 
-		const token = yield* lookupGitHubTokenByUserIdConfect(
+		const token = yield* lookupTokenByProviderConfect(
 			ctx.runQuery,
+			"github-notifications",
 			args.actingUserId,
 		);
 		const gh = yield* Effect.provide(

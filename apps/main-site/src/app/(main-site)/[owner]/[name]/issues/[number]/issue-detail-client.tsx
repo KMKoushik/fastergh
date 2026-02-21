@@ -316,11 +316,30 @@ function CommentForm({
 	const writeClient = useGithubWrite();
 	const [commentResult, submitComment] = useAtom(
 		writeClient.createComment.mutate,
+		{ mode: "promise" },
 	);
 	const [body, setBody] = useState("");
 	const correlationPrefix = useId();
 
 	const isSubmitting = Result.isWaiting(commentResult);
+
+	const handleSubmit = async () => {
+		const trimmedBody = body.trim();
+		if (trimmedBody.length === 0) return;
+		try {
+			await submitComment({
+				correlationId: `${correlationPrefix}-comment-${Date.now()}`,
+				ownerLogin,
+				name,
+				repositoryId,
+				number,
+				body: trimmedBody,
+			});
+			setBody("");
+		} catch {
+			// Error is captured in commentResult for display
+		}
+	};
 
 	return (
 		<div className="mt-6">
@@ -347,17 +366,7 @@ function CommentForm({
 				<Button
 					size="sm"
 					disabled={body.trim().length === 0 || isSubmitting}
-					onClick={() => {
-						submitComment({
-							correlationId: `${correlationPrefix}-comment-${Date.now()}`,
-							ownerLogin,
-							name,
-							repositoryId,
-							number,
-							body: body.trim(),
-						});
-						setBody("");
-					}}
+					onClick={handleSubmit}
 				>
 					{isSubmitting ? "Submitting..." : "Comment"}
 				</Button>

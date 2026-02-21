@@ -1,7 +1,12 @@
 "use client";
 
-import { Result, useAtom, useAtomValue } from "@effect-atom/atom-react";
+import { Result, useAtom } from "@effect-atom/atom-react";
 import { useSubscriptionWithInitial } from "@packages/confect/rpc";
+import {
+	Avatar,
+	AvatarFallback,
+	AvatarImage,
+} from "@packages/ui/components/avatar";
 import { Button } from "@packages/ui/components/button";
 import {
 	Collapsible,
@@ -15,21 +20,10 @@ import { UserButton } from "@packages/ui/components/user-button";
 import { GitHubIcon } from "@packages/ui/icons/index";
 import { authClient } from "@packages/ui/lib/auth-client";
 import { cn } from "@packages/ui/lib/utils";
-import { useNotifications } from "@packages/ui/rpc/notifications";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { useRepoOnboard } from "@packages/ui/rpc/repo-onboard";
 import { Array as Arr, Option, pipe, Record as Rec } from "effect";
-import {
-	Bell,
-	ChevronRight,
-	CircleDot,
-	Download,
-	GitPullRequest,
-	House,
-	Plus,
-	Rocket,
-	TriangleAlert,
-} from "lucide-react";
+import { ChevronRight, Download, Plus } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 
@@ -44,6 +38,7 @@ export type SidebarRepo = {
 	repositoryId: number;
 	fullName: string;
 	ownerLogin: string;
+	ownerAvatarUrl: string | null;
 	name: string;
 	openPrCount: number;
 	openIssueCount: number;
@@ -83,8 +78,6 @@ function SignedInSidebar({
 	const segments = pathname.split("/").filter(Boolean);
 	const activeOwner = segments[0] ?? null;
 	const activeName = segments[1] ?? null;
-	const isHome = pathname === "/";
-	const isInbox = pathname.startsWith("/inbox");
 
 	const client = useProjectionQueries();
 	const reposAtom = useMemo(
@@ -95,38 +88,22 @@ function SignedInSidebar({
 
 	return (
 		<div className="flex h-full flex-col bg-sidebar">
-			<div className="shrink-0 px-3 pt-3 pb-2 border-b border-sidebar-border">
-				<h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/70">
-					Repositories
-				</h2>
-				<div className="mt-2 grid grid-cols-2 gap-1">
-					<Button
-						asChild
-						size="sm"
-						variant={isHome ? "secondary" : "ghost"}
-						className="h-6 justify-start text-[10px]"
-					>
-						<Link href="/">
-							<House className="size-3" />
-							Home
-						</Link>
-					</Button>
-					<Button
-						asChild
-						size="sm"
-						variant={isInbox ? "secondary" : "ghost"}
-						className="h-6 justify-start text-[10px]"
-					>
-						<Link href="/inbox">
-							<Bell className="size-3" />
-							Inbox
-						</Link>
-					</Button>
+			{/* Header */}
+			<div className="shrink-0 px-2 pt-2 pb-1.5 border-b border-sidebar-border">
+				<div className="flex items-center justify-between mb-1.5">
+					<h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+						Repos
+					</h2>
+					<span className="text-[10px] text-muted-foreground/30 tabular-nums">
+						{repos.length}
+					</span>
 				</div>
 				<AddRepoSection />
 			</div>
+
+			{/* Repo list */}
 			<div className="flex-1 overflow-y-auto">
-				<div className="p-1.5">
+				<div className="py-0.5">
 					{repos.length === 0 && <EmptyRepoState />}
 
 					{repos.length > 0 &&
@@ -139,20 +116,26 @@ function SignedInSidebar({
 
 							return entries.map(([owner, ownerRepos]) => {
 								const ownerHasActiveRepo = activeOwner === owner;
+								const ownerAvatarUrl = ownerRepos[0]?.ownerAvatarUrl ?? null;
 								return (
 									<Collapsible
 										key={owner}
 										defaultOpen={ownerHasActiveRepo || entries.length === 1}
 									>
-										<CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground transition-colors [&[data-state=open]>svg]:rotate-90">
-											<ChevronRight className="h-3 w-3 shrink-0 transition-transform duration-200" />
+										<CollapsibleTrigger className="flex w-full items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors [&[data-state=open]>svg]:rotate-90">
+											<ChevronRight className="size-2.5 shrink-0 transition-transform duration-150" />
+											<Avatar className="size-3.5">
+												{ownerAvatarUrl && (
+													<AvatarImage src={ownerAvatarUrl} alt={owner} />
+												)}
+												<AvatarFallback className="text-[7px]">
+													{owner.slice(0, 2).toUpperCase()}
+												</AvatarFallback>
+											</Avatar>
 											<span className="truncate">{owner}</span>
-											<span className="ml-auto text-[10px] font-normal tabular-nums">
-												{ownerRepos.length}
-											</span>
 										</CollapsibleTrigger>
 										<CollapsibleContent>
-											<div className="ml-2.5 border-l border-border/40 pl-0.5">
+											<div className="ml-3 border-l border-sidebar-border/50">
 												{ownerRepos.map((repo) => {
 													const isActive =
 														repo.ownerLogin === activeOwner &&
@@ -162,32 +145,28 @@ function SignedInSidebar({
 															key={repo.repositoryId}
 															href={`/${repo.ownerLogin}/${repo.name}/pulls`}
 															className={cn(
-																"flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-sm transition-colors no-underline",
+																"group flex items-center gap-1 pl-2 pr-2 py-0.5 no-underline transition-colors",
 																isActive
-																	? "bg-accent text-accent-foreground"
-																	: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+																	? "bg-accent text-foreground border-l-2 border-foreground -ml-px"
+																	: "text-muted-foreground hover:text-foreground hover:bg-accent/40",
 															)}
 														>
-															<span className="font-semibold text-foreground truncate text-xs leading-tight">
+															<span className="truncate text-[11px] leading-none">
 																{repo.name}
 															</span>
-															<div className="flex items-center gap-2 text-[10px] tabular-nums">
-																<span>{repo.openPrCount} PRs</span>
-																<span className="text-muted-foreground/50">
-																	&middot;
+															{(repo.openPrCount > 0 ||
+																repo.failingCheckCount > 0) && (
+																<span className="ml-auto shrink-0 text-[9px] text-muted-foreground/30 tabular-nums">
+																	{repo.openPrCount > 0 && (
+																		<span>{repo.openPrCount}</span>
+																	)}
+																	{repo.failingCheckCount > 0 && (
+																		<span className="text-red-500/60 ml-1">
+																			{repo.failingCheckCount}
+																		</span>
+																	)}
 																</span>
-																<span>{repo.openIssueCount} issues</span>
-																{repo.failingCheckCount > 0 && (
-																	<>
-																		<span className="text-muted-foreground/50">
-																			&middot;
-																		</span>
-																		<span className="text-destructive font-medium">
-																			{repo.failingCheckCount} failing
-																		</span>
-																	</>
-																)}
-															</div>
+															)}
 														</Link>
 													);
 												})}
@@ -200,10 +179,9 @@ function SignedInSidebar({
 				</div>
 			</div>
 
-			{/* Auth state — pinned to bottom-left */}
-			<div className="shrink-0 border-t border-sidebar-border px-3 py-2 flex items-center justify-between">
+			{/* User — pinned to bottom */}
+			<div className="shrink-0 border-t border-sidebar-border px-2 py-1.5 flex items-center">
 				<UserButton />
-				<InboxButton />
 			</div>
 		</div>
 	);
@@ -227,60 +205,62 @@ function SignedOutSidebar({
 
 	return (
 		<div className="flex h-full flex-col bg-sidebar">
-			{/* Header */}
-			<div className="shrink-0 px-3 pt-3 pb-2 border-b border-sidebar-border">
-				<div className="flex items-center gap-1.5 mb-2">
-					<Rocket className="size-3.5 text-muted-foreground" />
-					<h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/70">
-						QuickHub
-					</h2>
-				</div>
-				<p className="text-[10px] text-muted-foreground leading-relaxed">
-					A real-time GitHub dashboard for your repos, PRs, issues, and CI.
+			{/* Brand header */}
+			<div className="shrink-0 px-2 pt-2 pb-1.5 border-b border-sidebar-border">
+				<h2 className="text-xs font-bold tracking-tight text-foreground">
+					QuickHub
+				</h2>
+				<p className="mt-0.5 text-[9px] text-muted-foreground/50 leading-snug">
+					GitHub dashboard for repos, PRs &amp; CI.
 				</p>
 			</div>
 
 			{/* Repo overview (read-only) */}
 			<div className="flex-1 overflow-y-auto">
-				<div className="p-1.5">
+				<div className="py-0.5">
 					{repos.length > 0 && (
 						<>
-							<p className="px-2 py-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
-								Active Repos
+							<p className="px-2 py-1 text-[9px] font-semibold text-muted-foreground/30 uppercase tracking-wider">
+								Active
 							</p>
 							{repos.map((repo) => (
 								<div
 									key={repo.repositoryId}
-									className="flex flex-col gap-0.5 rounded-md px-2 py-1.5"
+									className="flex items-center gap-1 px-2 py-0.5 min-w-0"
 								>
-									<span className="font-semibold text-foreground truncate text-xs leading-tight">
+									<Avatar className="size-3.5 shrink-0">
+										{repo.ownerAvatarUrl && (
+											<AvatarImage
+												src={repo.ownerAvatarUrl}
+												alt={repo.ownerLogin}
+											/>
+										)}
+										<AvatarFallback className="text-[7px]">
+											{repo.ownerLogin.slice(0, 2).toUpperCase()}
+										</AvatarFallback>
+									</Avatar>
+									<span className="text-foreground truncate text-[11px] leading-none">
 										{repo.fullName}
 									</span>
-									<div className="flex items-center gap-2 text-[10px] tabular-nums text-muted-foreground">
-										<span className="flex items-center gap-0.5">
-											<GitPullRequest className="size-2.5 text-green-500" />
-											{repo.openPrCount}
+									{(repo.openPrCount > 0 || repo.failingCheckCount > 0) && (
+										<span className="ml-auto shrink-0 text-[9px] text-muted-foreground/30 tabular-nums">
+											{repo.openPrCount > 0 && <span>{repo.openPrCount}</span>}
+											{repo.failingCheckCount > 0 && (
+												<span className="text-red-500/60 ml-1">
+													{repo.failingCheckCount}
+												</span>
+											)}
 										</span>
-										<span className="flex items-center gap-0.5">
-											<CircleDot className="size-2.5 text-blue-500" />
-											{repo.openIssueCount}
-										</span>
-										{repo.failingCheckCount > 0 && (
-											<span className="flex items-center gap-0.5 text-red-500 font-medium">
-												<TriangleAlert className="size-2.5" />
-												{repo.failingCheckCount}
-											</span>
-										)}
-									</div>
+									)}
 								</div>
 							))}
 						</>
 					)}
 
 					{repos.length === 0 && (
-						<div className="px-3 py-8 text-center">
-							<p className="text-[11px] text-muted-foreground">
-								Sign in to connect your repositories.
+						<div className="px-2 py-6 text-center">
+							<p className="text-[10px] text-muted-foreground/40">
+								Sign in to connect repos.
 							</p>
 						</div>
 					)}
@@ -288,20 +268,17 @@ function SignedOutSidebar({
 			</div>
 
 			{/* Sign-in CTA — pinned to bottom */}
-			<div className="shrink-0 border-t border-sidebar-border px-3 py-3 space-y-2">
+			<div className="shrink-0 border-t border-sidebar-border px-2 py-2">
 				<Button
 					size="sm"
-					className="w-full h-8 text-xs gap-1.5"
+					className="w-full h-7 text-[11px] gap-1"
 					onClick={() => {
 						authClient.signIn.social({ provider: "github" });
 					}}
 				>
-					<GitHubIcon className="size-3.5" />
-					Sign in with GitHub
+					<GitHubIcon className="size-3" />
+					Sign in
 				</Button>
-				<p className="text-[10px] text-muted-foreground text-center leading-relaxed">
-					Connect your GitHub account to manage your repos
-				</p>
 			</div>
 		</div>
 	);
@@ -314,45 +291,36 @@ function SignedOutSidebar({
 export function SidebarSkeleton() {
 	return (
 		<div className="flex h-full flex-col bg-sidebar">
-			<div className="shrink-0 px-3 pt-3 pb-2 border-b border-sidebar-border">
-				<Skeleton className="h-3 w-24 mb-2" />
-				<Skeleton className="h-7 w-full" />
+			<div className="shrink-0 px-2 pt-2 pb-1.5 border-b border-sidebar-border">
+				<Skeleton className="h-2.5 w-10 mb-1.5" />
+				<Skeleton className="h-6 w-full rounded-sm" />
 			</div>
 			<div className="flex-1 overflow-y-auto">
-				<div className="space-y-1 p-2.5">
-					{[1, 2, 3].map((i) => (
-						<div key={i} className="space-y-1 px-2 py-1.5">
-							<Skeleton className="h-3.5 w-28" />
-							<Skeleton className="h-2.5 w-20" />
-						</div>
+				<div className="space-y-px py-1 px-2">
+					{[1, 2, 3, 4, 5, 6, 7].map((i) => (
+						<Skeleton key={i} className="h-5 w-full rounded-sm" />
 					))}
 				</div>
 			</div>
-			<div className="shrink-0 border-t border-sidebar-border px-3 py-2">
-				<Skeleton className="h-7 w-16" />
+			<div className="shrink-0 border-t border-sidebar-border px-2 py-1.5">
+				<Skeleton className="h-5 w-14 rounded-sm" />
 			</div>
 		</div>
 	);
 }
 
-/** Empty state shown when no repos are connected yet. Guides users to install the GitHub App. */
 function EmptyRepoState() {
 	return (
-		<div className="px-3 py-8 text-center">
-			<div className="mx-auto size-10 rounded-full bg-muted/60 flex items-center justify-center">
-				<Download className="size-4 text-muted-foreground/50" />
-			</div>
-			<p className="mt-3 text-xs font-semibold text-foreground">
-				No repositories yet
-			</p>
-			<p className="mt-1 text-[11px] text-muted-foreground leading-relaxed max-w-[180px] mx-auto">
-				Install the GitHub App to start syncing repositories.
+		<div className="px-2 py-6 text-center">
+			<p className="text-[11px] font-medium text-foreground">No repos yet</p>
+			<p className="mt-0.5 text-[9px] text-muted-foreground/40 leading-snug">
+				Install the GitHub App to sync.
 			</p>
 			{GITHUB_APP_INSTALL_URL && (
-				<Button asChild size="sm" className="mt-3 h-7 text-xs w-full">
+				<Button asChild size="sm" className="mt-2 h-6 text-[10px] w-full">
 					<a href={GITHUB_APP_INSTALL_URL}>
-						<Download className="size-3" />
-						Install GitHub App
+						<Download className="size-2.5" />
+						Install
 					</a>
 				</Button>
 			)}
@@ -360,50 +328,24 @@ function EmptyRepoState() {
 	);
 }
 
-/** Add repo section: primary Install GitHub App button + collapsible manual input. */
 function AddRepoSection() {
 	return (
-		<div className="mt-2 space-y-1.5">
-			{/* Primary: Install GitHub App */}
+		<div className="space-y-1">
 			{GITHUB_APP_INSTALL_URL && (
-				<Button asChild size="sm" className="h-7 text-xs w-full">
+				<Button
+					asChild
+					size="sm"
+					variant="outline"
+					className="h-6 text-[10px] w-full"
+				>
 					<a href={GITHUB_APP_INSTALL_URL}>
-						<Download className="size-3" />
+						<Download className="size-2.5" />
 						Install GitHub App
 					</a>
 				</Button>
 			)}
-
-			{/* Secondary: Manual owner/repo input (collapsible) */}
 			<ManualAddCollapsible />
 		</div>
-	);
-}
-
-/** Notification bell button with unread badge. */
-function InboxButton() {
-	const client = useNotifications();
-	const notificationsAtom = useMemo(
-		() => client.listNotifications.subscription(EmptyPayload),
-		[client],
-	);
-	const result = useAtomValue(notificationsAtom);
-
-	const unreadCount = (() => {
-		const v = Result.value(result);
-		if (Option.isNone(v)) return 0;
-		return v.value.filter((n) => n.unread).length;
-	})();
-
-	return (
-		<Link href="/inbox" className="relative no-underline p-1">
-			<Bell className="size-4 text-muted-foreground hover:text-foreground transition-colors" />
-			{unreadCount > 0 && (
-				<span className="absolute -top-0.5 -right-0.5 flex items-center justify-center size-3.5 rounded-full bg-destructive text-destructive-foreground text-[8px] font-bold">
-					{unreadCount > 9 ? "9+" : unreadCount}
-				</span>
-			)}
-		</Link>
 	);
 }
 
@@ -470,16 +412,16 @@ function ManualAddCollapsible() {
 
 	return (
 		<Collapsible open={open} onOpenChange={setOpen}>
-			<CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+			<CollapsibleTrigger className="flex w-full items-center gap-0.5 py-0.5 text-[9px] text-muted-foreground/40 hover:text-muted-foreground transition-colors">
 				<ChevronRight
-					className={cn("size-3 transition-transform", open && "rotate-90")}
+					className={cn("size-2 transition-transform", open && "rotate-90")}
 				/>
-				<Plus className="size-3" />
+				<Plus className="size-2" />
 				<span>Add manually</span>
 			</CollapsibleTrigger>
 			<CollapsibleContent>
 				<form
-					className="flex gap-1.5 mt-1"
+					className="flex gap-1 mt-0.5"
 					onSubmit={(e) => {
 						e.preventDefault();
 						const url = inputRef.current?.value.trim();
@@ -491,23 +433,25 @@ function ManualAddCollapsible() {
 						ref={inputRef}
 						placeholder="owner/repo"
 						disabled={isLoading}
-						className="h-7 text-xs flex-1"
+						className="h-6 text-[10px] flex-1"
 					/>
 					<Button
 						type="submit"
 						size="sm"
 						variant="secondary"
 						disabled={isLoading}
-						className="h-7 text-xs px-2"
+						className="h-6 text-[10px] px-1.5"
 					>
 						{isLoading ? "..." : "Add"}
 					</Button>
 				</form>
 				{errorMessage && (
-					<p className="mt-1 text-[11px] text-destructive">{errorMessage}</p>
+					<p className="mt-0.5 text-[9px] text-destructive leading-snug">
+						{errorMessage}
+					</p>
 				)}
 				{isSuccess && (
-					<p className="mt-1 text-[11px] text-green-600">Repository added!</p>
+					<p className="mt-0.5 text-[9px] text-emerald-600">Added.</p>
 				)}
 			</CollapsibleContent>
 		</Collapsible>

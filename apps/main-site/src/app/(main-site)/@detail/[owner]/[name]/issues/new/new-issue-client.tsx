@@ -40,7 +40,7 @@ import {
 	X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { MarkdownBody } from "@/components/markdown-body";
 
 // ---------------------------------------------------------------------------
@@ -277,6 +277,7 @@ function NewIssueForm({
 	const writeClient = useGithubWrite();
 	const [createIssueResult, createIssue] = useAtom(
 		writeClient.createIssue.mutate,
+		{ mode: "promise" },
 	);
 	const correlationPrefix = useId();
 
@@ -287,24 +288,23 @@ function NewIssueForm({
 	);
 
 	const isSubmitting = Result.isWaiting(createIssueResult);
-	const isSuccess = Result.isSuccess(createIssueResult);
 
-	useEffect(() => {
-		if (!isSuccess) return;
-		router.push(`/${owner}/${name}/issues`);
-	}, [isSuccess, owner, name, router]);
-
-	const handleSubmit = () => {
+	const handleSubmit = async () => {
 		if (title.trim().length === 0) return;
-		createIssue({
-			correlationId: `${correlationPrefix}-create-issue-${Date.now()}`,
-			ownerLogin: owner,
-			name,
-			repositoryId,
-			title: title.trim(),
-			body: body.trim().length > 0 ? body.trim() : undefined,
-			labels: selectedLabels.length > 0 ? [...selectedLabels] : undefined,
-		});
+		try {
+			await createIssue({
+				correlationId: `${correlationPrefix}-create-issue-${Date.now()}`,
+				ownerLogin: owner,
+				name,
+				repositoryId,
+				title: title.trim(),
+				body: body.trim().length > 0 ? body.trim() : undefined,
+				labels: selectedLabels.length > 0 ? [...selectedLabels] : undefined,
+			});
+			router.push(`/${owner}/${name}/issues`);
+		} catch {
+			// Error is captured in createIssueResult for display
+		}
 	};
 
 	const handleToggleLabel = (label: string) => {

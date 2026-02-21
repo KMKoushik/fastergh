@@ -97,10 +97,25 @@ function InternalLink({
 		}
 	}, [isTouch, href, router]);
 
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent<HTMLAnchorElement>) => {
+			rest.onMouseDown?.(e);
+			if (e.defaultPrevented) return;
+			// Only handle primary button, no modifier keys
+			if (e.button !== 0) return;
+			if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+
+			e.preventDefault();
+			router.push(href, { scroll: rest.scroll ?? true });
+		},
+		[href, router, rest.onMouseDown, rest.scroll],
+	);
+
 	const sharedProps = {
 		scroll: true as const,
 		prefetch: false as const,
 		onPointerEnter: handlePointerEnter,
+		onMouseDown: handleMouseDown,
 		...rest,
 	};
 

@@ -4832,8 +4832,8 @@ export class Thread extends S.Class<Thread>("Thread")({
 	repository: MinimalRepository,
 	subject: S.Struct({
 		title: S.String,
-		url: S.String,
-		latest_comment_url: S.String,
+		url: S.NullOr(S.String),
+		latest_comment_url: S.NullOr(S.String),
 		type: S.String,
 	}),
 	reason: S.String,

@@ -168,7 +168,14 @@ export function InboxClient({
 
 	const isSyncing =
 		Result.isWaiting(syncResult) || Result.isWaiting(autoSyncResult);
-	const syncErrorOption = Result.error(syncResult);
+
+	// Surface errors from both manual sync and auto-sync
+	const manualSyncError = Result.error(syncResult);
+	const autoSyncError = Result.error(autoSyncResult);
+	const syncErrorOption = Opt.isSome(manualSyncError)
+		? manualSyncError
+		: autoSyncError;
+
 	const syncErrorMessage = useMemo(() => {
 		if (Opt.isNone(syncErrorOption)) return null;
 		const error = syncErrorOption.value;
@@ -188,10 +195,15 @@ export function InboxClient({
 		) {
 			return error.message;
 		}
-		return "Sync failed. Reconnect GitHub, then try Sync again.";
+		if (typeof error === "string") {
+			return error;
+		}
+		return `Sync failed: ${JSON.stringify(error)}`;
 	}, [syncErrorOption]);
 
 	const hasSyncError = syncErrorMessage !== null;
+	const isNotConnectedError =
+		syncErrorMessage !== null && syncErrorMessage.includes("not connected");
 
 	if (Result.isInitial(result)) {
 		return <InboxSkeleton />;
@@ -266,19 +278,35 @@ export function InboxClient({
 					<div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
 						<p className="text-xs text-destructive">{syncErrorMessage}</p>
 						<div className="mt-2 flex gap-2">
-							<Button
-								size="sm"
-								variant="outline"
-								className="h-6 text-[11px]"
-								onClick={() => {
-									authClient.signIn.social({
-										provider: "github",
-										callbackURL: "/inbox",
-									});
-								}}
-							>
-								Reconnect GitHub
-							</Button>
+							{isNotConnectedError ? (
+								<Button
+									size="sm"
+									variant="outline"
+									className="h-6 text-[11px]"
+									onClick={() => {
+										authClient.signIn.oauth2({
+											providerId: "github-notifications",
+											callbackURL: "/inbox",
+										});
+									}}
+								>
+									Connect Notifications
+								</Button>
+							) : (
+								<Button
+									size="sm"
+									variant="outline"
+									className="h-6 text-[11px]"
+									onClick={() => {
+										authClient.signIn.oauth2({
+											providerId: "github-notifications",
+											callbackURL: "/inbox",
+										});
+									}}
+								>
+									Reconnect GitHub
+								</Button>
+							)}
 							<Button
 								size="sm"
 								variant="ghost"

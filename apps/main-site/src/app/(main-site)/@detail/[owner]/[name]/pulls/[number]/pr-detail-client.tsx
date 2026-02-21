@@ -10,16 +10,50 @@ import {
 import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
 import { Input } from "@packages/ui/components/input";
+import { Kbd } from "@packages/ui/components/kbd";
 import { Link } from "@packages/ui/components/link";
+import { Separator } from "@packages/ui/components/separator";
 import { Skeleton } from "@packages/ui/components/skeleton";
 import { Textarea } from "@packages/ui/components/textarea";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@packages/ui/components/tooltip";
 import { cn } from "@packages/ui/lib/utils";
+import { useCodeBrowse } from "@packages/ui/rpc/code-browse";
+import { useGithubActions } from "@packages/ui/rpc/github-actions";
 import { useGithubWrite } from "@packages/ui/rpc/github-write";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
-import { PatchDiff } from "@pierre/diffs/react";
+import { type FileDiffMetadata, parseDiffFromFile } from "@pierre/diffs";
+import {
+	type DiffLineAnnotation,
+	FileDiff,
+	PatchDiff,
+} from "@pierre/diffs/react";
+import { useHotkey } from "@tanstack/react-hotkeys";
 import { Option } from "effect";
-import { ChevronDown, ExternalLink, Search } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+	ArrowDown,
+	ArrowUp,
+	ChevronDown,
+	ChevronsDown,
+	ChevronsUp,
+	Columns2,
+	ExternalLink,
+	FolderOpen,
+	MessageSquare,
+	Rows3,
+	Search,
+} from "lucide-react";
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { AssigneesCombobox } from "@/app/(main-site)/_components/assignees-combobox";
 import { LabelsCombobox } from "@/app/(main-site)/_components/labels-combobox";
 import { MarkdownBody } from "@/components/markdown-body";
@@ -166,6 +200,119 @@ type DraftReviewReply = {
 	readonly replyBody: string;
 	readonly createdAt: number;
 };
+
+type InlineReviewCommentTarget = {
+	readonly filename: string;
+	readonly startLine: number | null;
+	readonly startSide: "LEFT" | "RIGHT" | null;
+	readonly line: number;
+	readonly side: "LEFT" | "RIGHT";
+};
+
+type InlineDiffAnnotation = {
+	readonly kind: "composer";
+	readonly target: InlineReviewCommentTarget;
+};
+
+type DiffSelectedLineRange = {
+	readonly start: number;
+	readonly side?: "deletions" | "additions";
+	readonly end: number;
+	readonly endSide?: "deletions" | "additions";
+};
+
+type ActiveLineSelection = {
+	readonly filename: string;
+	readonly range: DiffSelectedLineRange;
+};
+
+function mapDiffAnnotationSideToGithub(
+	side: "deletions" | "additions" | undefined,
+): "LEFT" | "RIGHT" | null {
+	if (side === "deletions") return "LEFT";
+	if (side === "additions") return "RIGHT";
+	return null;
+}
+
+function buildInlineTargetFromSelection(
+	filename: string,
+	range: DiffSelectedLineRange,
+): InlineReviewCommentTarget | null {
+	const startSide = mapDiffAnnotationSideToGithub(range.side);
+	const endSide = mapDiffAnnotationSideToGithub(range.endSide ?? range.side);
+	if (endSide === null) return null;
+
+	const minLine = Math.min(range.start, range.end);
+	const maxLine = Math.max(range.start, range.end);
+
+	if (minLine === maxLine || startSide === null || startSide !== endSide) {
+		return {
+			filename,
+			startLine: null,
+			startSide: null,
+			line: range.end,
+			side: endSide,
+		};
+	}
+
+	return {
+		filename,
+		startLine: minLine,
+		startSide,
+		line: maxLine,
+		side: endSide,
+	};
+}
+
+function inlineTargetsEqual(
+	left: InlineReviewCommentTarget | null,
+	right: InlineReviewCommentTarget,
+): boolean {
+	if (left === null) return false;
+	return (
+		left.filename === right.filename &&
+		left.startLine === right.startLine &&
+		left.startSide === right.startSide &&
+		left.line === right.line &&
+		left.side === right.side
+	);
+}
+
+type FullContextDiffState = {
+	readonly status: "loading" | "ready" | "error";
+	readonly diff: FileDiffMetadata | null;
+	readonly errorMessage: string | null;
+};
+
+const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+
+function patchHasCollapsedContext(patch: string): boolean {
+	const matches = Array.from(patch.matchAll(HUNK_HEADER_PATTERN));
+	if (matches.length < 2) return false;
+
+	let previousOldEnd = 0;
+	let previousNewEnd = 0;
+	let isFirst = true;
+
+	for (const match of matches) {
+		const oldStart = Number.parseInt(match[1] ?? "0", 10);
+		const oldCount = Number.parseInt(match[2] ?? "1", 10);
+		const newStart = Number.parseInt(match[3] ?? "0", 10);
+		const newCount = Number.parseInt(match[4] ?? "1", 10);
+
+		if (!isFirst) {
+			if (oldStart > previousOldEnd + 1 && newStart > previousNewEnd + 1) {
+				return true;
+			}
+		}
+
+		previousOldEnd = oldStart + oldCount - 1;
+		previousNewEnd = newStart + newCount - 1;
+		isFirst = false;
+	}
+
+	return false;
+}
 
 export function PrDetailClient({
 	owner,
@@ -316,9 +463,15 @@ export function PrDetailClient({
 
 	if (pr === null) {
 		return (
-			<div className="py-8 text-center">
-				<h2 className="text-base font-semibold">PR #{prNumber}</h2>
-				<p className="mt-1 text-xs text-muted-foreground">Not synced yet.</p>
+			<div className="flex h-full items-center justify-center">
+				<div className="text-center space-y-2">
+					<div className="mx-auto size-10 rounded-full border-2 border-dashed border-muted-foreground/20 flex items-center justify-center">
+						<span className="text-sm font-mono text-muted-foreground/40">
+							#{prNumber}
+						</span>
+					</div>
+					<p className="text-xs text-muted-foreground/60">Not synced yet</p>
+				</div>
 			</div>
 		);
 	}
@@ -326,7 +479,7 @@ export function PrDetailClient({
 	return (
 		<div className="flex h-full">
 			{/* Main area: diff */}
-			<div className="flex-1 min-w-0 h-full overflow-y-auto">
+			<div className="flex-1 min-w-0 h-full overflow-y-auto scroll-smooth">
 				<DiffPanel
 					pr={pr}
 					filesData={filesData}
@@ -355,6 +508,224 @@ export function PrDetailClient({
 }
 
 // ---------------------------------------------------------------------------
+// Change stats mini-bar — visual representation of additions vs deletions
+// ---------------------------------------------------------------------------
+
+function ChangeStatsBar({
+	additions,
+	deletions,
+	className,
+}: {
+	additions: number;
+	deletions: number;
+	className?: string;
+}) {
+	const total = additions + deletions;
+	if (total === 0) return null;
+
+	const addPct = Math.round((additions / total) * 100);
+	const delPct = 100 - addPct;
+
+	const SQUARES = 5;
+	const addSquares = Math.round((additions / total) * SQUARES);
+	const delSquares = SQUARES - addSquares;
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span className={cn("inline-flex items-center gap-0.5", className)}>
+					{Array.from({ length: addSquares }, (_, i) => (
+						<span
+							key={`a-${String(i)}`}
+							className="inline-block size-[7px] rounded-[2px] bg-green-500"
+						/>
+					))}
+					{Array.from({ length: delSquares }, (_, i) => (
+						<span
+							key={`d-${String(i)}`}
+							className="inline-block size-[7px] rounded-[2px] bg-red-500"
+						/>
+					))}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent>
+				+{additions} / -{deletions} ({addPct}% added, {delPct}% removed)
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Grouped file tree for the "jump to file" panel
+// ---------------------------------------------------------------------------
+
+type FileTreeNode = {
+	readonly name: string;
+	readonly fullPath: string;
+	readonly isDir: boolean;
+	readonly status?: string;
+	readonly additions?: number;
+	readonly deletions?: number;
+	readonly commentCount?: number;
+	readonly children: Array<FileTreeNode>;
+};
+
+function buildFileTree(
+	entries: ReadonlyArray<{
+		filename: string;
+		status: string;
+		additions: number;
+		deletions: number;
+		reviewComments: ReadonlyArray<unknown>;
+	}>,
+): Array<FileTreeNode> {
+	const root: Array<FileTreeNode> = [];
+
+	for (const entry of entries) {
+		const parts = entry.filename.split("/");
+		let currentLevel = root;
+
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i];
+			if (part === undefined) continue;
+			const isLast = i === parts.length - 1;
+			const fullPath = parts.slice(0, i + 1).join("/");
+
+			const existing = currentLevel.find((node) => node.name === part);
+
+			if (isLast) {
+				currentLevel.push({
+					name: part,
+					fullPath,
+					isDir: false,
+					status: entry.status,
+					additions: entry.additions,
+					deletions: entry.deletions,
+					commentCount: entry.reviewComments.length,
+					children: [],
+				});
+			} else if (existing !== undefined && existing.isDir) {
+				currentLevel = existing.children;
+			} else {
+				const dirNode: FileTreeNode = {
+					name: part,
+					fullPath,
+					isDir: true,
+					children: [],
+				};
+				currentLevel.push(dirNode);
+				currentLevel = dirNode.children;
+			}
+		}
+	}
+
+	// Collapse single-child directories
+	function collapse(nodes: Array<FileTreeNode>): Array<FileTreeNode> {
+		return nodes.map((node) => {
+			if (
+				node.isDir &&
+				node.children.length === 1 &&
+				node.children[0] !== undefined &&
+				node.children[0].isDir
+			) {
+				const child = node.children[0];
+				const collapsed: FileTreeNode = {
+					...child,
+					name: `${node.name}/${child.name}`,
+					children: collapse(child.children),
+				};
+				return collapsed;
+			}
+			return { ...node, children: node.isDir ? collapse(node.children) : [] };
+		});
+	}
+
+	return collapse(root);
+}
+
+function FileTreeItem({
+	node,
+	focusedFilename,
+	onJumpToFile,
+	depth,
+}: {
+	node: FileTreeNode;
+	focusedFilename: string | null;
+	onJumpToFile: (filename: string) => void;
+	depth: number;
+}) {
+	const [isOpen, setIsOpen] = useState(true);
+
+	if (node.isDir) {
+		return (
+			<div>
+				<button
+					type="button"
+					onClick={() => setIsOpen((prev) => !prev)}
+					className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted/50 transition-colors"
+					style={{ paddingLeft: `${depth * 12 + 6}px` }}
+				>
+					<ChevronDown
+						className={cn(
+							"size-3 shrink-0 transition-transform duration-150",
+							!isOpen && "-rotate-90",
+						)}
+					/>
+					<FolderOpen className="size-3 shrink-0 text-muted-foreground/60" />
+					<span className="truncate font-mono">{node.name}</span>
+				</button>
+				{isOpen && (
+					<div>
+						{node.children.map((child) => (
+							<FileTreeItem
+								key={child.fullPath}
+								node={child}
+								focusedFilename={focusedFilename}
+								onJumpToFile={onJumpToFile}
+								depth={depth + 1}
+							/>
+						))}
+					</div>
+				)}
+			</div>
+		);
+	}
+
+	const isFocused = focusedFilename === node.fullPath;
+
+	return (
+		<button
+			type="button"
+			onClick={() => onJumpToFile(node.fullPath)}
+			className={cn(
+				"flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-[11px] transition-colors",
+				isFocused
+					? "bg-accent text-accent-foreground"
+					: "text-foreground hover:bg-muted/50",
+			)}
+			style={{ paddingLeft: `${depth * 12 + 6}px` }}
+		>
+			<FileStatusBadge status={node.status ?? "modified"} />
+			<span className="truncate font-mono min-w-0">{node.name}</span>
+			<span className="ml-auto flex items-center gap-2 shrink-0">
+				{(node.commentCount ?? 0) > 0 && (
+					<span className="inline-flex items-center gap-0.5 text-muted-foreground">
+						<MessageSquare className="size-2.5" />
+						<span className="text-[10px] tabular-nums">
+							{node.commentCount}
+						</span>
+					</span>
+				)}
+				<ChangeStatsBar
+					additions={node.additions ?? 0}
+					deletions={node.deletions ?? 0}
+				/>
+			</span>
+		</button>
+	);
+}
+
+// ---------------------------------------------------------------------------
 // Left: Diff / Files Changed
 // ---------------------------------------------------------------------------
 
@@ -373,6 +744,11 @@ function DiffPanel({
 	name: string;
 	onAddDraftReply: (reply: Omit<DraftReviewReply, "id" | "createdAt">) => void;
 }) {
+	const githubActions = useGithubActions();
+	const [inlineCommentResult, createInlineComment] = useAtom(
+		githubActions.createPrReviewComment.call,
+		{ mode: "promise" },
+	);
 	const files = filesData.files;
 	const fileFilterInputId = useId();
 	const [fileQuery, setFileQuery] = useState("");
@@ -383,6 +759,12 @@ function DiffPanel({
 	const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>(
 		{},
 	);
+	const [inlineComposerTarget, setInlineComposerTarget] =
+		useState<InlineReviewCommentTarget | null>(null);
+	const [inlineComposerBody, setInlineComposerBody] = useState("");
+	const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+	const [isFileTreeOpen, setIsFileTreeOpen] = useState(true);
+	const filterInputRef = useRef<HTMLInputElement>(null);
 
 	const diffPrefKey = `quickhub.diff.preferences.${owner}.${name}`;
 
@@ -425,26 +807,16 @@ function DiffPanel({
 		);
 	}, [diffPrefKey, viewMode, statusFilter]);
 
-	useEffect(() => {
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key.toLowerCase() === "d" && event.shiftKey) {
-				event.preventDefault();
-				setViewMode((current) => (current === "split" ? "unified" : "split"));
-			}
+	useHotkey("Shift+D", (event) => {
+		event.preventDefault();
+		setViewMode((current) => (current === "split" ? "unified" : "split"));
+	});
 
-			if (event.key.toLowerCase() === "f" && event.shiftKey) {
-				event.preventDefault();
-				const input = document.getElementById(fileFilterInputId);
-				if (input instanceof HTMLInputElement) {
-					input.focus();
-					input.select();
-				}
-			}
-		}
-
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [fileFilterInputId]);
+	useHotkey("Shift+F", (event) => {
+		event.preventDefault();
+		filterInputRef.current?.focus();
+		filterInputRef.current?.select();
+	});
 
 	const reviewCommentsByPath = useMemo(() => {
 		const grouped: Record<
@@ -486,6 +858,13 @@ function DiffPanel({
 			}),
 		[files, reviewCommentsByPath],
 	);
+	const codeBrowse = useCodeBrowse();
+	const [, getFileContent] = useAtom(codeBrowse.getFileContent.call, {
+		mode: "promise",
+	});
+	const [fullContextByFilename, setFullContextByFilename] = useState<
+		Record<string, FullContextDiffState>
+	>({});
 
 	const normalizedQuery = fileQuery.trim().toLowerCase();
 	const filteredEntries = entries.filter((entry) => {
@@ -505,17 +884,47 @@ function DiffPanel({
 		return filenameMatch || previousFilenameMatch;
 	});
 
+	const entriesWithCollapsedContext = useMemo(() => {
+		const map: Record<string, boolean> = {};
+		for (const entry of entries) {
+			map[entry.filename] =
+				entry.patch !== null && patchHasCollapsedContext(entry.patch);
+		}
+		return map;
+	}, [entries]);
+
 	const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0);
 	const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
 	const totalReviewComments = pr.reviewComments.length;
-	const [focusedFilename, setFocusedFilename] = useState<string | null>(null);
+	// Raw user intent — may point to a file no longer in filteredEntries
+	const [focusedFilenameRaw, setFocusedFilename] = useState<string | null>(
+		null,
+	);
+	// Derived: clamp to a valid entry (or fall back to the first visible file)
+	const focusedFilename =
+		filteredEntries.length === 0
+			? null
+			: focusedFilenameRaw !== null &&
+					filteredEntries.some((entry) => entry.filename === focusedFilenameRaw)
+				? focusedFilenameRaw
+				: (filteredEntries[0]?.filename ?? null);
+
 	const fileAnchorId = useCallback(
 		(filename: string) => `file-${filename.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
 		[],
 	);
 
 	const jumpToFile = useCallback(
-		(filename: string) => {
+		(filename: string, options?: { expand?: boolean }) => {
+			if (options?.expand === true) {
+				setCollapsedFiles((current) => {
+					if (current[filename] !== true) return current;
+					const next = { ...current };
+					delete next[filename];
+					return next;
+				});
+			}
+
 			const target = document.getElementById(fileAnchorId(filename));
 			if (target !== null) {
 				setFocusedFilename(filename);
@@ -524,26 +933,6 @@ function DiffPanel({
 		},
 		[fileAnchorId],
 	);
-
-	useEffect(() => {
-		if (filteredEntries.length === 0) {
-			setFocusedFilename(null);
-			return;
-		}
-
-		if (focusedFilename === null) {
-			setFocusedFilename(filteredEntries[0]?.filename ?? null);
-			return;
-		}
-
-		const stillVisible = filteredEntries.some(
-			(entry) => entry.filename === focusedFilename,
-		);
-
-		if (!stillVisible) {
-			setFocusedFilename(filteredEntries[0]?.filename ?? null);
-		}
-	}, [filteredEntries, focusedFilename]);
 
 	const moveFocusedFile = useCallback(
 		(direction: "next" | "previous") => {
@@ -559,40 +948,181 @@ function DiffPanel({
 					: Math.max(fallbackIndex - 1, 0);
 			const nextEntry = filteredEntries[nextIndex];
 			if (nextEntry !== undefined) {
-				jumpToFile(nextEntry.filename);
+				jumpToFile(nextEntry.filename, { expand: true });
 			}
 		},
 		[filteredEntries, focusedFilename, jumpToFile],
 	);
 
-	useEffect(() => {
-		function handleKeyDown(event: KeyboardEvent) {
-			const target = event.target;
-			if (target instanceof HTMLElement) {
-				const tag = target.tagName.toLowerCase();
+	useHotkey("]", (event) => {
+		event.preventDefault();
+		moveFocusedFile("next");
+	});
+
+	useHotkey("[", (event) => {
+		event.preventDefault();
+		moveFocusedFile("previous");
+	});
+
+	const loadFullContextForFile = useCallback(
+		async (filename: string) => {
+			let shouldLoad = false;
+			setFullContextByFilename((current) => {
+				if (current[filename] !== undefined) return current;
+				shouldLoad = true;
+				return {
+					...current,
+					[filename]: {
+						status: "loading",
+						diff: null,
+						errorMessage: null,
+					},
+				};
+			});
+
+			if (!shouldLoad) return;
+
+			const entry = entries.find(
+				(candidate) => candidate.filename === filename,
+			);
+			if (entry === undefined || entry.patch === null) {
+				setFullContextByFilename((current) => ({
+					...current,
+					[filename]: {
+						status: "error",
+						diff: null,
+						errorMessage: "No inline patch available.",
+					},
+				}));
+				return;
+			}
+
+			const oldPath = entry.previousFilename ?? entry.filename;
+			const needsOld = entry.status !== "added";
+			const needsNew = entry.status !== "removed";
+
+			try {
+				const oldFile = needsOld
+					? await getFileContent({
+							ownerLogin: owner,
+							name,
+							path: oldPath,
+							ref: pr.baseRefName,
+						})
+					: null;
+				const newFile = needsNew
+					? await getFileContent({
+							ownerLogin: owner,
+							name,
+							path: entry.filename,
+							ref: pr.headSha,
+						})
+					: null;
+
 				if (
-					tag === "input" ||
-					tag === "textarea" ||
-					target.getAttribute("contenteditable") === "true"
+					(oldFile !== null && oldFile.content === null) ||
+					(newFile !== null && newFile.content === null)
 				) {
+					setFullContextByFilename((current) => ({
+						...current,
+						[filename]: {
+							status: "error",
+							diff: null,
+							errorMessage:
+								"Could not load full context for binary or truncated content.",
+						},
+					}));
 					return;
 				}
-			}
 
-			if (event.key === "]") {
-				event.preventDefault();
-				moveFocusedFile("next");
-			}
+				const parsedDiff = parseDiffFromFile(
+					{
+						name: oldPath,
+						contents: oldFile?.content ?? "",
+					},
+					{
+						name: entry.filename,
+						contents: newFile?.content ?? "",
+					},
+				);
 
-			if (event.key === "[") {
-				event.preventDefault();
-				moveFocusedFile("previous");
+				setFullContextByFilename((current) => ({
+					...current,
+					[filename]: {
+						status: "ready",
+						diff: parsedDiff,
+						errorMessage: null,
+					},
+				}));
+			} catch {
+				setFullContextByFilename((current) => ({
+					...current,
+					[filename]: {
+						status: "error",
+						diff: null,
+						errorMessage: "Failed to load full file context.",
+					},
+				}));
 			}
+		},
+		[entries, getFileContent, name, owner, pr.baseRefName, pr.headSha],
+	);
+
+	useEffect(() => {
+		if (focusedFilename === null) return;
+		if (entriesWithCollapsedContext[focusedFilename] !== true) return;
+		if (fullContextByFilename[focusedFilename] !== undefined) return;
+		void loadFullContextForFile(focusedFilename);
+	}, [
+		entriesWithCollapsedContext,
+		focusedFilename,
+		fullContextByFilename,
+		loadFullContextForFile,
+	]);
+
+	const submitInlineComment = useCallback(async () => {
+		if (inlineComposerTarget === null) return;
+		const trimmedBody = inlineComposerBody.trim();
+		if (trimmedBody.length === 0) return;
+
+		try {
+			await createInlineComment({
+				ownerLogin: owner,
+				name,
+				repositoryId: pr.repositoryId,
+				prNumber: pr.number,
+				commitSha: pr.headSha,
+				body: trimmedBody,
+				path: inlineComposerTarget.filename,
+				line: inlineComposerTarget.line,
+				side: inlineComposerTarget.side,
+				startLine:
+					inlineComposerTarget.startLine === null
+						? undefined
+						: inlineComposerTarget.startLine,
+				startSide:
+					inlineComposerTarget.startSide === null
+						? undefined
+						: inlineComposerTarget.startSide,
+			});
+			setInlineComposerBody("");
+			setInlineComposerTarget(null);
+			setSelectionNotice(null);
+		} catch {
+			// Error is captured in inlineCommentResult for display
 		}
+	}, [
+		createInlineComment,
+		inlineComposerBody,
+		inlineComposerTarget,
+		name,
+		owner,
+		pr.headSha,
+		pr.number,
+		pr.repositoryId,
+	]);
 
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [moveFocusedFile]);
+	const isPostingInlineComment = Result.isWaiting(inlineCommentResult);
 
 	const focusedIndex = filteredEntries.findIndex(
 		(entry) => entry.filename === focusedFilename,
@@ -610,34 +1140,62 @@ function DiffPanel({
 		setCollapsedFiles({});
 	}
 
+	const statusCounts = useMemo(() => {
+		const counts = {
+			all: files.length,
+			added: 0,
+			modified: 0,
+			removed: 0,
+			renamed: 0,
+		};
+		for (const file of files) {
+			if (file.status === "added") counts.added++;
+			else if (file.status === "modified" || file.status === "changed")
+				counts.modified++;
+			else if (file.status === "removed") counts.removed++;
+			else if (file.status === "renamed" || file.status === "copied")
+				counts.renamed++;
+		}
+		return counts;
+	}, [files]);
+
+	const fileTree = useMemo(
+		() => buildFileTree(filteredEntries),
+		[filteredEntries],
+	);
+
 	return (
-		<div className="p-4">
-			{/* Compact header */}
-			<div className="flex items-start gap-2.5 mb-3">
+		<div className="p-4 pb-16">
+			{/* ── PR Header ── */}
+			<div className="flex items-start gap-3 mb-4">
 				<PrStateIconLarge state={pr.state} draft={pr.draft} />
 				<div className="min-w-0 flex-1">
-					<h1 className="text-base font-bold break-words leading-snug tracking-tight">
+					<h1 className="text-base font-semibold break-words leading-snug tracking-tight text-foreground">
 						{pr.title}
 					</h1>
-					<div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-						<span className="tabular-nums">#{pr.number}</span>
+					<div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+						<span className="font-mono tabular-nums text-muted-foreground/60">
+							#{pr.number}
+						</span>
 						<PrStateBadge
 							state={pr.state}
 							draft={pr.draft}
 							mergedAt={pr.mergedAt}
 						/>
 						{pr.authorLogin && (
-							<span className="flex items-center gap-1">
+							<span className="inline-flex items-center gap-1.5">
 								<Avatar className="size-4">
 									<AvatarImage src={pr.authorAvatarUrl ?? undefined} />
 									<AvatarFallback className="text-[8px]">
 										{pr.authorLogin[0]?.toUpperCase()}
 									</AvatarFallback>
 								</Avatar>
-								<span className="font-medium">{pr.authorLogin}</span>
+								<span className="font-medium text-foreground/80">
+									{pr.authorLogin}
+								</span>
 							</span>
 						)}
-						<span className="text-muted-foreground/40">&middot;</span>
+						<span className="text-muted-foreground/30">&middot;</span>
 						<span>{formatRelative(pr.githubUpdatedAt)}</span>
 					</div>
 				</div>
@@ -648,196 +1206,458 @@ function DiffPanel({
 				{pr.body && <CollapsibleDescription body={pr.body} />}
 			</div>
 
-			{/* Diff toolbar */}
-			<div className="sticky top-0 z-10 mb-3 rounded-md border bg-background/95 p-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-				<div className="flex flex-wrap items-center gap-1.5">
-					<Button
-						variant={viewMode === "split" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setViewMode("split")}
-					>
-						Split
-					</Button>
-					<Button
-						variant={viewMode === "unified" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setViewMode("unified")}
-					>
-						Unified
-					</Button>
+			{/* ── Toolbar ── */}
+			<div className="sticky top-0 z-10 mb-4 rounded-lg border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-sm">
+				{/* Top row: view mode, status filters, collapse/expand, navigation */}
+				<div className="flex items-center gap-1 px-2.5 py-2">
+					{/* View mode toggle */}
+					<div className="inline-flex items-center rounded-md border bg-muted/30 p-0.5">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={() => setViewMode("split")}
+									className={cn(
+										"inline-flex items-center gap-1.5 rounded-[5px] px-2 py-1 text-[11px] font-medium transition-all",
+										viewMode === "split"
+											? "bg-background text-foreground shadow-sm"
+											: "text-muted-foreground hover:text-foreground",
+									)}
+								>
+									<Columns2 className="size-3.5" />
+									Split
+								</button>
+							</TooltipTrigger>
+							<TooltipContent>
+								Split diff view <Kbd>Shift</Kbd>+<Kbd>D</Kbd>
+							</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={() => setViewMode("unified")}
+									className={cn(
+										"inline-flex items-center gap-1.5 rounded-[5px] px-2 py-1 text-[11px] font-medium transition-all",
+										viewMode === "unified"
+											? "bg-background text-foreground shadow-sm"
+											: "text-muted-foreground hover:text-foreground",
+									)}
+								>
+									<Rows3 className="size-3.5" />
+									Unified
+								</button>
+							</TooltipTrigger>
+							<TooltipContent>
+								Unified diff view <Kbd>Shift</Kbd>+<Kbd>D</Kbd>
+							</TooltipContent>
+						</Tooltip>
+					</div>
 
-					<div className="h-5 w-px bg-border mx-0.5" />
+					<Separator orientation="vertical" className="mx-1 h-5" />
 
-					<Button
-						variant={statusFilter === "all" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setStatusFilter("all")}
-					>
-						All
-					</Button>
-					<Button
-						variant={statusFilter === "modified" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setStatusFilter("modified")}
-					>
-						Modified
-					</Button>
-					<Button
-						variant={statusFilter === "added" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setStatusFilter("added")}
-					>
-						Added
-					</Button>
-					<Button
-						variant={statusFilter === "removed" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setStatusFilter("removed")}
-					>
-						Removed
-					</Button>
-					<Button
-						variant={statusFilter === "renamed" ? "default" : "outline"}
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => setStatusFilter("renamed")}
-					>
-						Renamed
-					</Button>
+					{/* Status filter pills */}
+					<div className="flex items-center gap-0.5">
+						{(
+							[
+								["all", "All", statusCounts.all],
+								["modified", "Modified", statusCounts.modified],
+								["added", "Added", statusCounts.added],
+								["removed", "Removed", statusCounts.removed],
+								["renamed", "Renamed", statusCounts.renamed],
+							] as const
+						).map(([value, label, count]) => (
+							<button
+								key={value}
+								type="button"
+								onClick={() => setStatusFilter(value)}
+								className={cn(
+									"inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+									statusFilter === value
+										? "bg-foreground/8 text-foreground"
+										: "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50",
+									count === 0 &&
+										value !== "all" &&
+										"opacity-40 pointer-events-none",
+								)}
+							>
+								{label}
+								{value !== "all" && count > 0 && (
+									<span className="text-[10px] tabular-nums text-muted-foreground/50">
+										{count}
+									</span>
+								)}
+							</button>
+						))}
+					</div>
 
-					<div className="h-5 w-px bg-border mx-0.5" />
+					{/* Right side: collapse/expand, navigation */}
+					<div className="ml-auto flex items-center gap-0.5">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-7 w-7 p-0"
+									onClick={collapseAllVisibleFiles}
+									aria-label="Collapse all files"
+								>
+									<ChevronsUp className="size-3.5" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>Collapse all files</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-7 w-7 p-0"
+									onClick={expandAllVisibleFiles}
+									aria-label="Expand all files"
+								>
+									<ChevronsDown className="size-3.5" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>Expand all files</TooltipContent>
+						</Tooltip>
 
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={collapseAllVisibleFiles}
-					>
-						Collapse all
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={expandAllVisibleFiles}
-					>
-						Expand all
-					</Button>
+						<Separator orientation="vertical" className="mx-1 h-5" />
 
-					<div className="h-5 w-px bg-border mx-0.5" />
-
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => moveFocusedFile("previous")}
-						disabled={filteredEntries.length === 0}
-					>
-						Prev [
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-7 px-2 text-[11px]"
-						onClick={() => moveFocusedFile("next")}
-						disabled={filteredEntries.length === 0}
-					>
-						Next ]
-					</Button>
-					<span className="text-[11px] text-muted-foreground tabular-nums">
-						{focusedIndex === -1
-							? "0/0"
-							: `${focusedIndex + 1}/${filteredEntries.length}`}
-					</span>
+						<div className="inline-flex items-center gap-0.5">
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-7 w-7 p-0"
+										onClick={() => moveFocusedFile("previous")}
+										disabled={filteredEntries.length === 0}
+									>
+										<ArrowUp className="size-3.5" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>
+									Previous file <Kbd>[</Kbd>
+								</TooltipContent>
+							</Tooltip>
+							<span className="text-[11px] tabular-nums text-muted-foreground min-w-[3ch] text-center">
+								{focusedIndex === -1
+									? "-"
+									: `${focusedIndex + 1}/${filteredEntries.length}`}
+							</span>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-7 w-7 p-0"
+										onClick={() => moveFocusedFile("next")}
+										disabled={filteredEntries.length === 0}
+									>
+										<ArrowDown className="size-3.5" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>
+									Next file <Kbd>]</Kbd>
+								</TooltipContent>
+							</Tooltip>
+						</div>
+					</div>
 				</div>
 
-				<div className="mt-2 flex items-center gap-2">
+				{/* Search bar row */}
+				<div className="flex items-center gap-2 border-t px-2.5 py-1.5">
 					<div className="relative min-w-0 flex-1">
-						<Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+						<Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/40" />
 						<Input
+							ref={filterInputRef}
 							id={fileFilterInputId}
 							value={fileQuery}
 							onChange={(event) => setFileQuery(event.target.value)}
-							placeholder="Filter files (Shift+F)"
-							className="h-8 pl-7 text-xs"
+							placeholder="Filter files..."
+							className="h-7 pl-7 text-xs border-0 bg-transparent shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/40"
 						/>
 					</div>
-					<span className="text-[11px] text-muted-foreground tabular-nums">
-						{filteredEntries.length}/{files.length} files
-					</span>
-					{totalReviewComments > 0 && (
-						<Badge variant="outline" className="text-[10px]">
-							{totalReviewComments} review comment
-							{totalReviewComments === 1 ? "" : "s"}
-						</Badge>
-					)}
+					<div className="flex items-center gap-2 shrink-0">
+						<span className="text-[11px] text-muted-foreground/50 tabular-nums">
+							{filteredEntries.length}/{files.length}
+						</span>
+						{totalReviewComments > 0 && (
+							<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/50">
+								<MessageSquare className="size-3" />
+								<span className="tabular-nums">{totalReviewComments}</span>
+							</span>
+						)}
+						<Kbd className="hidden sm:inline-flex">Shift+F</Kbd>
+					</div>
 				</div>
+
+				{/* Selection notice */}
+				{selectionNotice !== null && (
+					<div className="border-t px-2.5 py-1.5">
+						<p className="text-[11px] text-amber-600 dark:text-amber-400">
+							{selectionNotice}
+						</p>
+					</div>
+				)}
 			</div>
 
-			{/* Files summary + diffs */}
+			{/* ── Files content ── */}
 			{files.length > 0 && (
-				<div>
-					<h2 className="text-sm font-semibold mb-2">
-						Files Changed
-						<span className="ml-2 text-xs font-normal text-muted-foreground">
-							{files.length} file{files.length !== 1 ? "s" : ""}
-							{totalAdditions > 0 && (
-								<span className="text-green-600 ml-1">+{totalAdditions}</span>
-							)}
-							{totalDeletions > 0 && (
-								<span className="text-red-600 ml-1">-{totalDeletions}</span>
-							)}
+				<div className="space-y-4">
+					{/* Summary bar with stats */}
+					<div className="flex items-center gap-3 text-xs">
+						<span className="font-medium text-foreground">
+							{files.length} file{files.length !== 1 ? "s" : ""} changed
 						</span>
-					</h2>
+						<span className="inline-flex items-center gap-1 text-green-600 font-mono tabular-nums">
+							+{totalAdditions}
+						</span>
+						<span className="inline-flex items-center gap-1 text-red-600 font-mono tabular-nums">
+							-{totalDeletions}
+						</span>
+						<ChangeStatsBar
+							additions={totalAdditions}
+							deletions={totalDeletions}
+						/>
+					</div>
+
+					{/* File tree (collapsible) */}
 					{filteredEntries.length > 1 && (
-						<div className="mb-2 rounded-md border bg-muted/10 p-2">
-							<p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground/80">
-								Jump to file
-							</p>
-							<div className="flex flex-wrap gap-1">
-								{filteredEntries.map((entry) => (
-									<button
-										key={`jump-${entry.filename}`}
-										type="button"
-										onClick={() => jumpToFile(entry.filename)}
-										className={cn(
-											"inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 text-[10px] hover:bg-muted",
-											focusedFilename === entry.filename &&
-												"border-foreground/60 bg-accent",
-										)}
-									>
-										<FileStatusBadge status={entry.status} />
-										<span className="max-w-56 truncate font-mono">
-											{entry.filename}
-										</span>
-									</button>
-								))}
-							</div>
+						<div className="rounded-lg border">
+							<button
+								type="button"
+								onClick={() => setIsFileTreeOpen((prev) => !prev)}
+								className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
+							>
+								<ChevronDown
+									className={cn(
+										"size-3 text-muted-foreground transition-transform duration-150",
+										!isFileTreeOpen && "-rotate-90",
+									)}
+								/>
+								<span className="font-medium">Changed files</span>
+								<span className="text-muted-foreground/50 tabular-nums">
+									{filteredEntries.length}
+								</span>
+							</button>
+							{isFileTreeOpen && (
+								<div className="border-t px-1.5 py-1.5 max-h-64 overflow-y-auto">
+									{fileTree.map((node) => (
+										<FileTreeItem
+											key={node.fullPath}
+											node={node}
+											focusedFilename={focusedFilename}
+											onJumpToFile={jumpToFile}
+											depth={0}
+										/>
+									))}
+								</div>
+							)}
 						</div>
 					)}
+
+					{/* Diff blocks */}
 					{filteredEntries.length > 0 && (
-						<div className="space-y-2">
+						<div className="space-y-3">
 							{filteredEntries.map((entry) => {
 								const reviewThreads = buildReviewThreads(entry.reviewComments);
+								const inlineAnnotations: Array<
+									DiffLineAnnotation<InlineDiffAnnotation>
+								> =
+									inlineComposerTarget !== null &&
+									inlineComposerTarget.filename === entry.filename
+										? [
+												{
+													side:
+														inlineComposerTarget.side === "LEFT"
+															? "deletions"
+															: "additions",
+													lineNumber: inlineComposerTarget.line,
+													metadata: {
+														kind: "composer",
+														target: inlineComposerTarget,
+													},
+												},
+											]
+										: [];
+
+								const isCollapsed = collapsedFiles[entry.filename] === true;
+								const isFocused = focusedFilename === entry.filename;
+								const totalChanges = entry.additions + entry.deletions;
+								const hasCollapsedContext =
+									entriesWithCollapsedContext[entry.filename] === true;
+								const fullContextState = fullContextByFilename[entry.filename];
+								const fullContextDiff =
+									fullContextState?.status === "ready"
+										? fullContextState.diff
+										: null;
+								const isLoadingFullContext =
+									fullContextState?.status === "loading";
+								const fullContextError =
+									fullContextState?.status === "error"
+										? fullContextState.errorMessage
+										: null;
+								const renderInlineComposer = (
+									annotation: DiffLineAnnotation<InlineDiffAnnotation>,
+								) => {
+									if (annotation.metadata.kind !== "composer") {
+										return null;
+									}
+
+									return (
+										<InlineReviewCommentComposer
+											target={annotation.metadata.target}
+											body={inlineComposerBody}
+											onBodyChange={setInlineComposerBody}
+											onSubmit={submitInlineComment}
+											onCancel={() => {
+												setInlineComposerTarget(null);
+												setInlineComposerBody("");
+												setSelectionNotice(null);
+											}}
+											isSubmitting={isPostingInlineComment}
+											errorMessage={
+												Result.isFailure(inlineCommentResult)
+													? extractInteractionError(
+															inlineCommentResult,
+															"Could not post inline comment",
+														)
+													: null
+											}
+										/>
+									);
+								};
+								const diffOptions: {
+									diffStyle: "split" | "unified";
+									disableFileHeader: boolean;
+									hunkSeparators: "line-info";
+									expansionLineCount: number;
+									enableLineSelection: boolean;
+									onLineSelectionEnd: (
+										range: {
+											start: number;
+											side?: "deletions" | "additions";
+											end: number;
+											endSide?: "deletions" | "additions";
+										} | null,
+									) => void;
+									onLineNumberClick: (lineEvent: {
+										lineNumber: number;
+										annotationSide: "deletions" | "additions";
+									}) => void;
+								} = {
+									diffStyle: viewMode,
+									disableFileHeader: true,
+									hunkSeparators: "line-info",
+									expansionLineCount: 10,
+									enableLineSelection: true,
+									onLineSelectionEnd: (
+										range: {
+											start: number;
+											side?: "deletions" | "additions";
+											end: number;
+											endSide?: "deletions" | "additions";
+										} | null,
+									) => {
+										if (range === null) {
+											return;
+										}
+
+										const normalizedRange: DiffSelectedLineRange = {
+											start: range.start,
+											side: range.side,
+											end: range.end,
+											endSide: range.endSide,
+										};
+
+										const nextTarget = buildInlineTargetFromSelection(
+											entry.filename,
+											normalizedRange,
+										);
+
+										if (nextTarget === null) {
+											setSelectionNotice(
+												"Could not determine line side for this selection.",
+											);
+											return;
+										}
+
+										const minLine = Math.min(
+											normalizedRange.start,
+											normalizedRange.end,
+										);
+										const maxLine = Math.max(
+											normalizedRange.start,
+											normalizedRange.end,
+										);
+										const selectedMultipleLines = minLine !== maxLine;
+
+										if (
+											selectedMultipleLines &&
+											nextTarget.startLine !== null
+										) {
+											setSelectionNotice(
+												`Selected ${entry.filename}:${String(nextTarget.startLine)}-${String(nextTarget.line)} for a multi-line comment.`,
+											);
+										} else if (selectedMultipleLines) {
+											setSelectionNotice(
+												"Selection spans both diff sides. Keep the selection on one side for a true multi-line comment.",
+											);
+										} else {
+											setSelectionNotice(null);
+										}
+
+										setInlineComposerTarget((current) => {
+											if (inlineTargetsEqual(current, nextTarget)) {
+												return current;
+											}
+											setInlineComposerBody("");
+											return nextTarget;
+										});
+									},
+									onLineNumberClick: (lineEvent: {
+										lineNumber: number;
+										annotationSide: "deletions" | "additions";
+									}) => {
+										if (lineEvent.lineNumber <= 0) return;
+										const nextTarget: InlineReviewCommentTarget = {
+											filename: entry.filename,
+											startLine: null,
+											startSide: null,
+											line: lineEvent.lineNumber,
+											side:
+												lineEvent.annotationSide === "deletions"
+													? "LEFT"
+													: "RIGHT",
+										};
+
+										setSelectionNotice(null);
+
+										setInlineComposerTarget((current) => {
+											if (inlineTargetsEqual(current, nextTarget)) {
+												setInlineComposerBody("");
+												return null;
+											}
+
+											setInlineComposerBody("");
+											return nextTarget;
+										});
+									},
+								};
 
 								return (
 									<div
 										key={entry.filename}
 										id={fileAnchorId(entry.filename)}
 										className={cn(
-											"min-w-0 rounded-md scroll-mt-24",
-											focusedFilename === entry.filename &&
-												"ring-1 ring-foreground/20",
+											"min-w-0 rounded-lg border scroll-mt-36 transition-shadow duration-200",
+											isFocused && "ring-1 ring-ring/30 shadow-sm",
 										)}
 									>
-										<div className="flex items-center gap-2 px-2 py-1 bg-muted/50 rounded-t-md border border-b-0 text-[10px]">
-											<FileStatusBadge status={entry.status} />
+										{/* File header */}
+										<div className="flex items-center gap-2 px-3 py-2 bg-muted/30 rounded-t-lg">
 											<button
 												type="button"
 												onClick={() =>
@@ -846,58 +1666,231 @@ function DiffPanel({
 														[entry.filename]: !current[entry.filename],
 													}))
 												}
-												className="inline-flex size-5 items-center justify-center rounded hover:bg-muted"
+												className="inline-flex size-5 items-center justify-center rounded hover:bg-muted transition-colors"
 											>
 												<ChevronDown
 													className={cn(
-														"size-3 text-muted-foreground transition-transform",
-														collapsedFiles[entry.filename] === true &&
-															"-rotate-90",
+														"size-3.5 text-muted-foreground transition-transform duration-150",
+														isCollapsed && "-rotate-90",
 													)}
 												/>
 											</button>
-											<span className="font-mono font-medium truncate min-w-0">
+											<FileStatusBadge status={entry.status} />
+											<span className="font-mono text-[12px] font-medium truncate min-w-0 text-foreground/90">
 												{entry.filename}
 											</span>
-											{entry.reviewComments.length > 0 && (
-												<Badge
-													variant="outline"
-													className="text-[9px] h-4 px-1"
-												>
-													{entry.reviewComments.length} comment
-													{entry.reviewComments.length === 1 ? "" : "s"}
-												</Badge>
-											)}
-											<span className="ml-auto flex gap-1.5 shrink-0">
-												<span className="text-green-600">
-													+{entry.additions}
+											{entry.previousFilename && entry.status === "renamed" && (
+												<span className="text-[10px] text-muted-foreground/50 truncate">
+													(from {entry.previousFilename})
 												</span>
-												<span className="text-red-600">-{entry.deletions}</span>
-											</span>
+											)}
+
+											{/* Right side: comment count + stats */}
+											<div className="ml-auto flex items-center gap-2.5 shrink-0">
+												{hasCollapsedContext && (
+													<Button
+														variant="ghost"
+														size="sm"
+														className="h-5 px-1.5 text-[10px]"
+														onClick={() =>
+															void loadFullContextForFile(entry.filename)
+														}
+														disabled={
+															isLoadingFullContext || fullContextDiff !== null
+														}
+													>
+														{fullContextDiff !== null
+															? "Context loaded"
+															: isLoadingFullContext
+																? "Loading context..."
+																: "Load context"}
+													</Button>
+												)}
+												{entry.reviewComments.length > 0 && (
+													<span className="inline-flex items-center gap-1 text-muted-foreground">
+														<MessageSquare className="size-3" />
+														<span className="text-[10px] tabular-nums">
+															{entry.reviewComments.length}
+														</span>
+													</span>
+												)}
+												{totalChanges > 0 && (
+													<>
+														<span className="text-[11px] font-mono tabular-nums text-green-600">
+															+{entry.additions}
+														</span>
+														<span className="text-[11px] font-mono tabular-nums text-red-600">
+															-{entry.deletions}
+														</span>
+														<ChangeStatsBar
+															additions={entry.additions}
+															deletions={entry.deletions}
+														/>
+													</>
+												)}
+											</div>
 										</div>
-										{collapsedFiles[entry.filename] !== true && (
+
+										{/* Diff content */}
+										{!isCollapsed && (
 											<>
 												{entry.patch !== null ? (
-													<div className="overflow-x-auto border rounded-b-md">
-														<PatchDiff
-															patch={entry.patch}
-															options={{
-																diffStyle: viewMode,
-																disableFileHeader: true,
-															}}
-														/>
+													<div className="overflow-x-auto border-t">
+														{fullContextDiff !== null ? (
+															<FileDiff
+																fileDiff={fullContextDiff}
+																lineAnnotations={[...inlineAnnotations]}
+																renderAnnotation={renderInlineComposer}
+																options={diffOptions}
+															/>
+														) : (
+															<PatchDiff
+																patch={entry.patch}
+																lineAnnotations={[...inlineAnnotations]}
+																renderAnnotation={(annotation) => {
+																	if (annotation.metadata.kind !== "composer") {
+																		return null;
+																	}
+
+																	return (
+																		<InlineReviewCommentComposer
+																			target={annotation.metadata.target}
+																			body={inlineComposerBody}
+																			onBodyChange={setInlineComposerBody}
+																			onSubmit={submitInlineComment}
+																			onCancel={() => {
+																				setInlineComposerTarget(null);
+																				setInlineComposerBody("");
+																				setSelectionNotice(null);
+																			}}
+																			isSubmitting={isPostingInlineComment}
+																			errorMessage={
+																				Result.isFailure(inlineCommentResult)
+																					? extractInteractionError(
+																							inlineCommentResult,
+																							"Could not post inline comment",
+																						)
+																					: null
+																			}
+																		/>
+																	);
+																}}
+																options={{
+																	diffStyle: viewMode,
+																	disableFileHeader: true,
+																	enableLineSelection: true,
+																	onLineSelectionEnd: (range) => {
+																		if (range === null) {
+																			return;
+																		}
+
+																		const normalizedRange: DiffSelectedLineRange =
+																			{
+																				start: range.start,
+																				side: range.side,
+																				end: range.end,
+																				endSide: range.endSide,
+																			};
+
+																		const nextTarget =
+																			buildInlineTargetFromSelection(
+																				entry.filename,
+																				normalizedRange,
+																			);
+
+																		if (nextTarget === null) {
+																			setSelectionNotice(
+																				"Could not determine line side for this selection.",
+																			);
+																			return;
+																		}
+
+																		const minLine = Math.min(
+																			normalizedRange.start,
+																			normalizedRange.end,
+																		);
+																		const maxLine = Math.max(
+																			normalizedRange.start,
+																			normalizedRange.end,
+																		);
+																		const selectedMultipleLines =
+																			minLine !== maxLine;
+
+																		if (
+																			selectedMultipleLines &&
+																			nextTarget.startLine !== null
+																		) {
+																			setSelectionNotice(
+																				`Lines ${String(nextTarget.startLine)}\u2013${String(nextTarget.line)} selected for comment.`,
+																			);
+																		} else if (selectedMultipleLines) {
+																			setSelectionNotice(
+																				"Selection spans both diff sides. Keep the selection on one side for a true multi-line comment.",
+																			);
+																		} else {
+																			setSelectionNotice(null);
+																		}
+
+																		setInlineComposerTarget((current) => {
+																			if (
+																				inlineTargetsEqual(current, nextTarget)
+																			) {
+																				return current;
+																			}
+																			setInlineComposerBody("");
+																			return nextTarget;
+																		});
+																	},
+																	onLineNumberClick: (lineEvent) => {
+																		if (lineEvent.lineNumber <= 0) return;
+																		const nextTarget: InlineReviewCommentTarget =
+																			{
+																				filename: entry.filename,
+																				startLine: null,
+																				startSide: null,
+																				line: lineEvent.lineNumber,
+																				side:
+																					lineEvent.annotationSide ===
+																					"deletions"
+																						? "LEFT"
+																						: "RIGHT",
+																			};
+
+																		setSelectionNotice(null);
+
+																		setInlineComposerTarget((current) => {
+																			if (
+																				inlineTargetsEqual(current, nextTarget)
+																			) {
+																				setInlineComposerBody("");
+																				return null;
+																			}
+
+																			setInlineComposerBody("");
+																			return nextTarget;
+																		});
+																	},
+																}}
+															/>
+														)}
+														{fullContextError !== null && (
+															<p className="px-3 py-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+																{fullContextError}
+															</p>
+														)}
 													</div>
 												) : (
-													<div className="rounded-b-md border border-t-0 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
-														No inline patch available for this file (binary file
-														or GitHub truncation).
+													<div className="border-t bg-muted/10 px-4 py-4 text-xs text-muted-foreground/60 text-center">
+														No inline patch available (binary file or GitHub
+														truncation)
 													</div>
 												)}
 
+												{/* Review comment threads */}
 												{entry.reviewComments.length > 0 && (
-													<div className="rounded-b-md border border-t-0 bg-muted/10 p-2 space-y-2">
-														<p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground/80">
-															Review comments
+													<div className="border-t bg-muted/5 p-3 space-y-2">
+														<p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50 mb-2">
+															Review threads
 														</p>
 														{reviewThreads.map((thread) => (
 															<ReviewThreadConversation
@@ -920,32 +1913,41 @@ function DiffPanel({
 						</div>
 					)}
 					{filteredEntries.length === 0 && (
-						<div className="rounded-md border bg-muted/10 px-3 py-4 text-xs text-muted-foreground">
-							No files match your filter.
+						<div className="rounded-lg border bg-muted/5 px-4 py-8 text-center">
+							<p className="text-xs text-muted-foreground/60">
+								No files match your filter
+							</p>
 						</div>
 					)}
 				</div>
 			)}
 
+			{/* Loading state */}
 			{files.length === 0 && isSyncingFiles && (
-				<div className="space-y-3">
-					<div className="flex items-center gap-2 text-xs text-muted-foreground">
-						<div className="size-3.5 rounded-full border-2 border-muted-foreground border-t-transparent animate-spin" />
-						<span>Loading file changes...</span>
+				<div className="space-y-3 mt-4">
+					<div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+						<div className="size-3.5 rounded-full border-2 border-muted-foreground/40 border-t-transparent animate-spin" />
+						<span>Syncing file changes...</span>
 					</div>
 					{[1, 2, 3].map((i) => (
-						<div key={i}>
-							<Skeleton className="h-8 w-full rounded-t-md rounded-b-none" />
-							<Skeleton className="h-24 w-full rounded-t-none rounded-b-md" />
+						<div key={i} className="rounded-lg border overflow-hidden">
+							<Skeleton className="h-10 w-full rounded-none" />
+							<Skeleton className="h-28 w-full rounded-none" />
 						</div>
 					))}
 				</div>
 			)}
 
+			{/* Empty state */}
 			{files.length === 0 && !isSyncingFiles && (
-				<p className="py-8 text-center text-xs text-muted-foreground">
-					No file changes synced yet.
-				</p>
+				<div className="flex flex-col items-center justify-center py-16 text-center">
+					<div className="size-10 rounded-full border-2 border-dashed border-muted-foreground/15 flex items-center justify-center mb-3">
+						<FolderOpen className="size-4 text-muted-foreground/30" />
+					</div>
+					<p className="text-xs text-muted-foreground/50">
+						No file changes synced yet
+					</p>
+				</div>
 			)}
 		</div>
 	);
@@ -988,6 +1990,69 @@ function renderDraftRepliesMarkdown(
 	return blocks.join("\n\n");
 }
 
+function InlineReviewCommentComposer({
+	target,
+	body,
+	onBodyChange,
+	onSubmit,
+	onCancel,
+	isSubmitting,
+	errorMessage,
+}: {
+	target: InlineReviewCommentTarget;
+	body: string;
+	onBodyChange: (value: string) => void;
+	onSubmit: () => void;
+	onCancel: () => void;
+	isSubmitting: boolean;
+	errorMessage: string | null;
+}) {
+	const lineRange =
+		target.startLine === null
+			? String(target.line)
+			: `${String(target.startLine)}-${String(target.line)}`;
+	const lineLabel = `${target.filename}:${lineRange}${target.side === "LEFT" ? " (old)" : ""}`;
+
+	return (
+		<div className="rounded-md border border-amber-300/60 bg-amber-50/60 p-2.5 dark:border-amber-500/40 dark:bg-amber-950/20">
+			<p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+				Inline review comment
+			</p>
+			<p className="mb-2 text-[11px] text-muted-foreground">{lineLabel}</p>
+			<Textarea
+				value={body}
+				onChange={(event) => onBodyChange(event.target.value)}
+				placeholder="Write an inline comment..."
+				rows={3}
+				className="text-xs"
+				disabled={isSubmitting}
+			/>
+			<div className="mt-2 flex items-center justify-end gap-1.5">
+				<Button
+					variant="outline"
+					size="sm"
+					className="h-7 px-2 text-[10px]"
+					onClick={onCancel}
+					disabled={isSubmitting}
+				>
+					Cancel
+				</Button>
+				<Button
+					size="sm"
+					className="h-7 px-2 text-[10px]"
+					onClick={onSubmit}
+					disabled={body.trim().length === 0 || isSubmitting}
+				>
+					{isSubmitting ? "Posting..." : "Post inline comment"}
+				</Button>
+			</div>
+			{errorMessage !== null && (
+				<p className="mt-1.5 text-[10px] text-destructive">{errorMessage}</p>
+			)}
+		</div>
+	);
+}
+
 function ReviewThreadConversation({
 	thread,
 	ownerLogin,
@@ -1003,48 +2068,34 @@ function ReviewThreadConversation({
 	prNumber: number;
 	onAddDraftReply: (reply: Omit<DraftReviewReply, "id" | "createdAt">) => void;
 }) {
-	const writeClient = useGithubWrite();
-	const [replyResult, createReply] = useAtom(writeClient.createComment.mutate);
+	const githubActions = useGithubActions();
+	const [replyResult, createReply] = useAtom(
+		githubActions.createPrReviewCommentReply.call,
+		{ mode: "promise" },
+	);
 	const [replyBody, setReplyBody] = useState("");
 	const [isComposerOpen, setIsComposerOpen] = useState(false);
-	const correlationPrefix = useId();
 	const isSubmitting = Result.isWaiting(replyResult);
 	const isSuccess = Result.isSuccess(replyResult);
 
-	useEffect(() => {
-		if (!isSuccess) return;
-		setReplyBody("");
-		setIsComposerOpen(false);
-	}, [isSuccess]);
-
-	const lineLabel =
-		thread.root.line === null
-			? ""
-			: `:${String(thread.root.line)}${thread.root.side === "LEFT" ? " (old)" : ""}`;
-	const pathLabel = thread.root.path === null ? "this file" : thread.root.path;
-	const rootAuthor = thread.root.authorLogin ?? "reviewer";
-
-	const submitReply = () => {
+	const submitReply = async () => {
 		const trimmedReply = replyBody.trim();
 		if (trimmedReply.length === 0) return;
 
-		const body = [
-			`Replying to @${rootAuthor} on \`${pathLabel}${lineLabel}\`:`,
-			"",
-			trimmedReply,
-			"",
-			"---",
-			quoteMarkdown(thread.root.body),
-		].join("\n");
-
-		createReply({
-			correlationId: `${correlationPrefix}-thread-reply-${Date.now()}`,
-			ownerLogin,
-			name,
-			repositoryId,
-			number: prNumber,
-			body,
-		});
+		try {
+			await createReply({
+				ownerLogin,
+				name,
+				repositoryId,
+				prNumber,
+				inReplyToGithubReviewCommentId: thread.root.githubReviewCommentId,
+				body: trimmedReply,
+			});
+			setReplyBody("");
+			setIsComposerOpen(false);
+		} catch {
+			// Error is captured in replyResult for display
+		}
 	};
 
 	const addReplyToDraft = () => {
@@ -1110,7 +2161,7 @@ function ReviewThreadConversation({
 						</span>
 					)}
 					{isSuccess && (
-						<span className="text-[10px] text-green-600">Reply queued</span>
+						<span className="text-[10px] text-green-600">Reply posted</span>
 					)}
 				</div>
 
@@ -1119,7 +2170,7 @@ function ReviewThreadConversation({
 						<Textarea
 							value={replyBody}
 							onChange={(event) => setReplyBody(event.target.value)}
-							placeholder="Write a reply. This posts to the PR conversation with quoted thread context."
+							placeholder="Write an inline reply to this thread..."
 							rows={3}
 							className="text-xs"
 							disabled={isSubmitting}
@@ -1140,7 +2191,7 @@ function ReviewThreadConversation({
 								disabled={replyBody.trim().length === 0 || isSubmitting}
 								onClick={submitReply}
 							>
-								{isSubmitting ? "Posting..." : "Post reply"}
+								{isSubmitting ? "Posting..." : "Post inline reply"}
 							</Button>
 						</div>
 					</div>
@@ -1179,14 +2230,9 @@ function ReviewDraftReplyCard({
 	onRemove: () => void;
 	onSave: (nextBody: string) => void;
 }) {
-	const [isEditing, setIsEditing] = useState(false);
-	const [draftBody, setDraftBody] = useState(draftReply.replyBody);
-
-	useEffect(() => {
-		setDraftBody(draftReply.replyBody);
-	}, [draftReply.replyBody]);
-
-	const trimmedBody = draftBody.trim();
+	const [draftBody, setDraftBody] = useState<string | null>(null);
+	const isEditing = draftBody !== null;
+	const trimmedBody = draftBody?.trim() ?? "";
 
 	return (
 		<div className="rounded-md border px-3 py-2">
@@ -1197,7 +2243,11 @@ function ReviewDraftReplyCard({
 				<div className="flex items-center gap-1 shrink-0">
 					<button
 						type="button"
-						onClick={() => setIsEditing((current) => !current)}
+						onClick={() =>
+							setDraftBody((current) =>
+								current !== null ? null : draftReply.replyBody,
+							)
+						}
 						className="rounded px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors cursor-pointer"
 					>
 						{isEditing ? "Cancel" : "Edit"}
@@ -1225,10 +2275,7 @@ function ReviewDraftReplyCard({
 							variant="outline"
 							size="sm"
 							className="h-7 text-xs"
-							onClick={() => {
-								setDraftBody(draftReply.replyBody);
-								setIsEditing(false);
-							}}
+							onClick={() => setDraftBody(draftReply.replyBody)}
 						>
 							Reset
 						</Button>
@@ -1238,7 +2285,7 @@ function ReviewDraftReplyCard({
 							disabled={trimmedBody.length === 0}
 							onClick={() => {
 								onSave(trimmedBody);
-								setIsEditing(false);
+								setDraftBody(null);
 							}}
 						>
 							Save
@@ -1819,28 +2866,27 @@ function CollapsibleDescription({ body }: { body: string }) {
 	return (
 		<div>
 			<SidebarHeading>Description</SidebarHeading>
-			<div className="rounded-md border overflow-hidden">
-				<div
-					className={cn(
-						"prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed px-3 py-1.5 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h2]:text-sm [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h3]:text-xs [&_h3]:mt-2.5 [&_h3]:mb-1 [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0 [&_:not(pre)>code]:text-[0.85em]",
-						!expanded && "max-h-28 overflow-hidden",
-					)}
-				>
-					<MarkdownBody>{visibleBody}</MarkdownBody>
-				</div>
-				<button
-					type="button"
-					onClick={() => setExpanded((prev) => !prev)}
-					className="flex w-full items-center justify-center border-t py-1.5 hover:bg-muted/30 transition-colors cursor-pointer"
-				>
-					<ChevronDown
-						className={cn(
-							"size-3.5 text-muted-foreground/60 transition-transform duration-200",
-							expanded && "rotate-180",
-						)}
-					/>
-				</button>
+			<div
+				className={cn(
+					"prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h2]:text-sm [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h3]:text-xs [&_h3]:mt-2.5 [&_h3]:mb-1 [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0 [&_:not(pre)>code]:text-[0.85em]",
+					!expanded && "max-h-28 overflow-hidden",
+				)}
+			>
+				<MarkdownBody>{visibleBody}</MarkdownBody>
 			</div>
+			<button
+				type="button"
+				onClick={() => setExpanded((prev) => !prev)}
+				className="flex w-full items-center justify-center gap-1 mt-1.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors cursor-pointer"
+			>
+				<ChevronDown
+					className={cn(
+						"size-3 transition-transform duration-200",
+						expanded && "rotate-180",
+					)}
+				/>
+				{expanded ? "Show less" : "Show more"}
+			</button>
 		</div>
 	);
 }
@@ -2009,10 +3055,29 @@ function CommentForm({
 	const writeClient = useGithubWrite();
 	const [commentResult, submitComment] = useAtom(
 		writeClient.createComment.mutate,
+		{ mode: "promise" },
 	);
 	const [body, setBody] = useState("");
 	const correlationPrefix = useId();
 	const isSubmitting = Result.isWaiting(commentResult);
+
+	const handleSubmit = async () => {
+		const trimmedBody = body.trim();
+		if (trimmedBody.length === 0) return;
+		try {
+			await submitComment({
+				correlationId: `${correlationPrefix}-comment-${Date.now()}`,
+				ownerLogin,
+				name,
+				repositoryId,
+				number,
+				body: trimmedBody,
+			});
+			setBody("");
+		} catch {
+			// Error is captured in commentResult for display
+		}
+	};
 
 	return (
 		<div>
@@ -2038,17 +3103,7 @@ function CommentForm({
 					size="sm"
 					disabled={body.trim().length === 0 || isSubmitting}
 					className="h-8 text-xs"
-					onClick={() => {
-						submitComment({
-							correlationId: `${correlationPrefix}-comment-${Date.now()}`,
-							ownerLogin,
-							name,
-							repositoryId,
-							number,
-							body: body.trim(),
-						});
-						setBody("");
-					}}
+					onClick={handleSubmit}
 				>
 					{isSubmitting ? "Sending..." : "Comment"}
 				</Button>
@@ -2079,23 +3134,30 @@ function ReviewSubmitSection({
 	const writeClient = useGithubWrite();
 	const [reviewResult, submitReview] = useAtom(
 		writeClient.submitPrReview.mutate,
+		{ mode: "promise" },
 	);
 	const [body, setBody] = useState("");
 	const correlationPrefix = useId();
+	const [selectedEvent, setSelectedEvent] = useState<
+		"APPROVE" | "REQUEST_CHANGES" | "COMMENT"
+	>("COMMENT");
 	const [pendingEvent, setPendingEvent] = useState<
 		"APPROVE" | "REQUEST_CHANGES" | "COMMENT" | null
 	>(null);
 	const [includeDraftReplies, setIncludeDraftReplies] = useState(true);
 	const [showDraftPreview, setShowDraftPreview] = useState(false);
 	const isSubmitting = Result.isWaiting(reviewResult);
+	const isSuccess = Result.isSuccess(reviewResult);
 
-	useEffect(() => {
-		if (draftReplies.length > 0) {
-			setIncludeDraftReplies(true);
-		}
-	}, [draftReplies.length]);
+	// Re-include drafts when new ones arrive (tracks previous count to detect additions)
+	const prevDraftCountRef = useRef(draftReplies.length);
+	if (draftReplies.length > prevDraftCountRef.current) {
+		setIncludeDraftReplies(true);
+	}
+	prevDraftCountRef.current = draftReplies.length;
 
-	const handleSubmit = (event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT") => {
+	const handleSubmit = async () => {
+		const event = selectedEvent;
 		const trimmedBody = body.trim();
 		const draftMarkdown = renderDraftRepliesMarkdown(
 			includeDraftReplies ? draftReplies : [],
@@ -2105,62 +3167,77 @@ function ReviewSubmitSection({
 			.join("\n\n");
 
 		setPendingEvent(event);
-		submitReview({
-			correlationId: `${correlationPrefix}-review-${Date.now()}`,
-			ownerLogin,
-			name,
-			repositoryId,
-			number,
-			event,
-			body: finalBody.length > 0 ? finalBody : undefined,
-		});
-	};
-
-	// Clear body on success
-	const isSuccess = Result.isSuccess(reviewResult);
-	useEffect(() => {
-		if (isSuccess) {
+		try {
+			await submitReview({
+				correlationId: `${correlationPrefix}-review-${Date.now()}`,
+				ownerLogin,
+				name,
+				repositoryId,
+				number,
+				event,
+				body: finalBody.length > 0 ? finalBody : undefined,
+			});
 			setBody("");
 			setPendingEvent(null);
 			setShowDraftPreview(false);
 			onClearDraftReplies();
+		} catch {
+			setPendingEvent(null);
 		}
-	}, [isSuccess, onClearDraftReplies]);
+	};
+
+	const reviewOptions = [
+		{ value: "COMMENT" as const, label: "Comment", dot: "bg-muted-foreground" },
+		{ value: "APPROVE" as const, label: "Approve", dot: "bg-green-500" },
+		{
+			value: "REQUEST_CHANGES" as const,
+			label: "Request changes",
+			dot: "bg-orange-500",
+		},
+	];
+
+	const submitLabel =
+		selectedEvent === "APPROVE"
+			? "Submit approval"
+			: selectedEvent === "REQUEST_CHANGES"
+				? "Request changes"
+				: "Submit comment";
 
 	return (
 		<div>
 			<SidebarHeading>Submit review</SidebarHeading>
 			{draftReplies.length > 0 && (
-				<div className="mb-2.5 rounded-md border px-3 py-2">
+				<div className="mb-2.5">
 					<div className="flex items-center justify-between gap-2">
-						<span className="text-xs text-muted-foreground">
-							{draftReplies.length} draft{" "}
+						<span className="text-[11px] text-muted-foreground/70 tabular-nums">
+							{draftReplies.length} pending{" "}
 							{draftReplies.length === 1 ? "reply" : "replies"}
 						</span>
-						<div className="flex items-center gap-1">
+						<div className="flex items-center gap-0.5">
 							<button
 								type="button"
 								onClick={() => setIncludeDraftReplies((current) => !current)}
 								className={cn(
-									"rounded px-1.5 py-0.5 text-xs transition-colors cursor-pointer",
+									"rounded px-1.5 py-0.5 text-[11px] transition-colors cursor-pointer",
 									includeDraftReplies
-										? "bg-foreground/10 text-foreground font-medium"
-										: "text-muted-foreground/60 hover:text-muted-foreground",
+										? "text-foreground/80"
+										: "text-muted-foreground/40 line-through",
 								)}
 							>
-								{includeDraftReplies ? "Included" : "Excluded"}
+								{includeDraftReplies ? "include" : "skip"}
 							</button>
+							<span className="text-muted-foreground/20">|</span>
 							<button
 								type="button"
 								onClick={() => setShowDraftPreview((current) => !current)}
-								className="rounded px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors cursor-pointer"
+								className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-pointer"
 							>
-								{showDraftPreview ? "Hide" : "Preview"}
+								{showDraftPreview ? "hide" : "preview"}
 							</button>
 						</div>
 					</div>
 					{showDraftPreview && (
-						<div className="mt-2 rounded border bg-background p-2.5">
+						<div className="mt-1.5 rounded border bg-muted/30 p-2.5">
 							<div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto text-xs leading-relaxed">
 								<MarkdownBody>
 									{renderDraftRepliesMarkdown(
@@ -2173,50 +3250,59 @@ function ReviewSubmitSection({
 				</div>
 			)}
 			<Textarea
-				placeholder="Leave a review comment..."
+				placeholder="Leave a comment..."
 				value={body}
 				onChange={(e) => setBody(e.target.value)}
 				rows={2}
 				disabled={isSubmitting}
 				className="text-xs resize-none"
 			/>
-			<div className="flex gap-2 mt-2">
-				<Button
-					size="sm"
-					className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white flex-1"
-					disabled={isSubmitting}
-					onClick={() => handleSubmit("APPROVE")}
-				>
-					{isSubmitting && pendingEvent === "APPROVE" ? "..." : "Approve"}
-				</Button>
-				<Button
-					size="sm"
-					variant="destructive"
-					className="h-8 text-xs flex-1"
-					disabled={isSubmitting}
-					onClick={() => handleSubmit("REQUEST_CHANGES")}
-				>
-					{isSubmitting && pendingEvent === "REQUEST_CHANGES"
-						? "..."
-						: "Request changes"}
-				</Button>
-				<Button
-					size="sm"
-					variant="outline"
-					className="h-8 text-xs flex-1"
-					disabled={isSubmitting}
-					onClick={() => handleSubmit("COMMENT")}
-				>
-					{isSubmitting && pendingEvent === "COMMENT" ? "..." : "Comment"}
-				</Button>
+			<div className="mt-2 space-y-1">
+				{reviewOptions.map((opt) => (
+					<label
+						key={opt.value}
+						className={cn(
+							"flex items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer transition-colors",
+							selectedEvent === opt.value
+								? "bg-accent text-accent-foreground"
+								: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+						)}
+					>
+						<input
+							type="radio"
+							name="review-event"
+							value={opt.value}
+							checked={selectedEvent === opt.value}
+							onChange={() => setSelectedEvent(opt.value)}
+							className="sr-only"
+						/>
+						<span
+							className={cn(
+								"size-2 rounded-full shrink-0 transition-opacity",
+								opt.dot,
+								selectedEvent === opt.value ? "opacity-100" : "opacity-40",
+							)}
+						/>
+						{opt.label}
+					</label>
+				))}
 			</div>
+			<Button
+				size="sm"
+				variant="outline"
+				className="mt-2 h-7 w-full text-xs"
+				disabled={isSubmitting}
+				onClick={() => handleSubmit()}
+			>
+				{isSubmitting && pendingEvent !== null ? "Submitting..." : submitLabel}
+			</Button>
 			{Result.isFailure(reviewResult) && (
-				<p className="mt-2 text-xs text-destructive">
+				<p className="mt-1.5 text-[11px] text-destructive">
 					{extractInteractionError(reviewResult, "Could not queue review")}
 				</p>
 			)}
 			{isSuccess && (
-				<p className="mt-2 text-xs text-green-600">
+				<p className="mt-1.5 text-[11px] text-green-600 dark:text-green-500">
 					Review queued. Syncing with GitHub...
 				</p>
 			)}

@@ -37,9 +37,9 @@ export function HubShell({
 				<ResizablePanelGroup direction="horizontal" className="h-full">
 					{/* Panel 1: Sidebar (repos or list) */}
 					<ResizablePanel
-						defaultSize={25}
-						minSize={16}
-						maxSize={40}
+						defaultSize={13}
+						minSize={8}
+						maxSize={20}
 						className="border-r border-border/60"
 					>
 						<Suspense fallback={null}>{sidebar}</Suspense>
@@ -48,7 +48,7 @@ export function HubShell({
 					<ResizableHandle />
 
 					{/* Panel 2: Detail/Content */}
-					<ResizablePanel defaultSize={75} minSize={40} className="min-w-0">
+					<ResizablePanel defaultSize={87} minSize={60} className="min-w-0">
 						<Suspense fallback={null}>{detail}</Suspense>
 					</ResizablePanel>
 				</ResizablePanelGroup>

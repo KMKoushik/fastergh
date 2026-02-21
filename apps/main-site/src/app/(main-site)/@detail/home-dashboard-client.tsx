@@ -7,14 +7,7 @@ import {
 	AvatarFallback,
 	AvatarImage,
 } from "@packages/ui/components/avatar";
-import { Badge } from "@packages/ui/components/badge";
 import { Button } from "@packages/ui/components/button";
-import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "@packages/ui/components/card";
 import { Link } from "@packages/ui/components/link";
 import { Skeleton } from "@packages/ui/components/skeleton";
 import { GitHubIcon } from "@packages/ui/icons/index";
@@ -23,15 +16,10 @@ import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import {
 	Activity,
-	AlertTriangle,
-	ArrowRight,
-	CheckCircle2,
-	CircleDot,
 	Eye,
 	GitBranch,
 	GitPullRequest,
 	MessageCircle,
-	Rocket,
 	User,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
@@ -103,89 +91,53 @@ type AttentionItem = {
 	title: string;
 	number: number;
 	reason: string;
-	source: "review" | "owned" | "failing";
-	priority: number;
+	source: "review" | "owned";
 	githubUpdatedAt: number;
-	lastCheckConclusion: string | null;
+	hasFailingChecks: boolean;
 };
 
-type AttentionScope = "all" | "my" | "failing";
+type AttentionScope = "all" | "reviews" | "yours";
 
 function buildAttentionQueue(data: DashboardData): Array<AttentionItem> {
 	const next = new Map<string, AttentionItem>();
 
-	const upsert = (item: AttentionItem) => {
-		const existing = next.get(item.id);
-		if (existing === undefined) {
-			next.set(item.id, item);
-			return;
-		}
-		if (item.priority > existing.priority) {
-			next.set(item.id, item);
-			return;
-		}
-		if (
-			item.priority === existing.priority &&
-			item.githubUpdatedAt > existing.githubUpdatedAt
-		) {
-			next.set(item.id, item);
-		}
-	};
-
+	// PRs where you're a requested reviewer / assignee — highest priority
 	for (const pr of data.needsAttentionPrs) {
 		const id = `${pr.ownerLogin}/${pr.repoName}#${pr.number}`;
-		upsert({
+		next.set(id, {
 			id,
 			path: `/${pr.ownerLogin}/${pr.repoName}/pulls/${pr.number}`,
 			repoLabel: `${pr.ownerLogin}/${pr.repoName}`,
 			title: pr.title,
 			number: pr.number,
-			reason: "Needs your review",
+			reason: "Review requested",
 			source: "review",
-			priority: 100,
 			githubUpdatedAt: pr.githubUpdatedAt,
-			lastCheckConclusion: pr.lastCheckConclusion,
+			hasFailingChecks: pr.lastCheckConclusion === "failure",
 		});
 	}
 
+	// Your own PRs — show them so you can track progress
 	for (const pr of data.yourPrs) {
 		const id = `${pr.ownerLogin}/${pr.repoName}#${pr.number}`;
+		if (next.has(id)) continue; // already in as a review item
 		const hasFailingChecks = pr.lastCheckConclusion === "failure";
-		upsert({
+		next.set(id, {
 			id,
 			path: `/${pr.ownerLogin}/${pr.repoName}/pulls/${pr.number}`,
 			repoLabel: `${pr.ownerLogin}/${pr.repoName}`,
 			title: pr.title,
 			number: pr.number,
-			reason: hasFailingChecks
-				? "Your PR has failing checks"
-				: "Your PR needs progress",
+			reason: hasFailingChecks ? "CI failing" : "Your PR",
 			source: "owned",
-			priority: hasFailingChecks ? 95 : 76,
 			githubUpdatedAt: pr.githubUpdatedAt,
-			lastCheckConclusion: pr.lastCheckConclusion,
+			hasFailingChecks,
 		});
 	}
 
-	for (const pr of data.recentPrs) {
-		if (pr.lastCheckConclusion !== "failure") continue;
-		const id = `${pr.ownerLogin}/${pr.repoName}#${pr.number}`;
-		upsert({
-			id,
-			path: `/${pr.ownerLogin}/${pr.repoName}/pulls/${pr.number}`,
-			repoLabel: `${pr.ownerLogin}/${pr.repoName}`,
-			title: pr.title,
-			number: pr.number,
-			reason: "Failing CI checks",
-			source: "failing",
-			priority: 88,
-			githubUpdatedAt: pr.githubUpdatedAt,
-			lastCheckConclusion: pr.lastCheckConclusion,
-		});
-	}
-
+	// Sort: reviews first, then by most recently updated
 	return [...next.values()].sort((a, b) => {
-		if (b.priority !== a.priority) return b.priority - a.priority;
+		if (a.source !== b.source) return a.source === "review" ? -1 : 1;
 		return b.githubUpdatedAt - a.githubUpdatedAt;
 	});
 }
@@ -211,149 +163,120 @@ export function HomeDashboard({
 
 	const isSignedIn = session.data !== null;
 	const attentionQueue = buildAttentionQueue(data);
-	const visibleAttentionQueue = attentionQueue.filter((item) => {
-		if (attentionScope === "all") return true;
-		if (attentionScope === "my") {
-			return item.source === "review" || item.source === "owned";
-		}
-		return item.lastCheckConclusion === "failure";
-	});
+	const filteredQueue =
+		attentionScope === "reviews"
+			? attentionQueue.filter((item) => item.source === "review")
+			: attentionScope === "yours"
+				? attentionQueue.filter((item) => item.source === "owned")
+				: attentionQueue;
 
-	const totalOpenPrs = data.repos.reduce(
-		(sum, repo) => sum + repo.openPrCount,
-		0,
-	);
-	const totalOpenIssues = data.repos.reduce(
-		(sum, repo) => sum + repo.openIssueCount,
-		0,
-	);
-	const totalFailing = data.repos.reduce(
-		(sum, repo) => sum + repo.failingCheckCount,
-		0,
-	);
-	const failingPrs = [
-		...data.yourPrs,
-		...data.needsAttentionPrs,
-		...data.recentPrs,
-	]
-		.filter((pr) => pr.lastCheckConclusion === "failure")
-		.slice(0, 12);
+	const reviewCount = attentionQueue.filter(
+		(i) => i.source === "review",
+	).length;
+	const yourPrCount = data.yourPrs.length;
+	const yourFailingCount = data.yourPrs.filter(
+		(pr) => pr.lastCheckConclusion === "failure",
+	).length;
+
+	// Build a contextual summary — what's fresh for *you*
+	const summaryParts: Array<string> = [];
+	if (reviewCount > 0) {
+		summaryParts.push(
+			`${reviewCount} PR${reviewCount === 1 ? "" : "s"} waiting for your review`,
+		);
+	}
+	if (yourFailingCount > 0) {
+		summaryParts.push(
+			`${yourFailingCount} of your PR${yourFailingCount === 1 ? "" : "s"} failing CI`,
+		);
+	} else if (yourPrCount > 0) {
+		summaryParts.push(
+			`${yourPrCount} open PR${yourPrCount === 1 ? "" : "s"} by you`,
+		);
+	}
+	const summaryText =
+		summaryParts.length > 0
+			? summaryParts.join(" · ")
+			: isSignedIn
+				? "All clear — nothing needs your attention"
+				: "Sign in to see what needs your attention";
 
 	return (
-		<div className="h-full overflow-y-auto">
-			<div className="px-4 py-4 md:px-6 md:py-5">
-				<div className="mb-4 flex flex-wrap items-end justify-between gap-2">
-					<div>
-						<div className="mb-1 flex items-center gap-2">
-							<Rocket className="size-4 text-muted-foreground" />
-							<h1 className="text-lg font-semibold tracking-tight text-foreground">
+		<div className="h-full overflow-y-auto bg-dotgrid">
+			<div className="px-4 py-5 md:px-8 md:py-6">
+				{/* ── Header ─────────────────────────────────── */}
+				<div className="mb-6">
+					<div className="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<h1 className="text-xl font-bold tracking-tight text-foreground">
 								{data.githubLogin !== null
 									? `${data.githubLogin}'s Workbench`
 									: isSignedIn
 										? "Team Workbench"
-										: "QuickHub Workbench"}
+										: "QuickHub"}
 							</h1>
+							<p className="mt-1.5 font-mono text-[11px] text-muted-foreground/60">
+								{summaryText}
+							</p>
 						</div>
-						<p className="text-xs text-muted-foreground">
-							Cross-repo triage for what needs attention now.
-						</p>
-					</div>
-					<div className="flex items-center gap-2">
-						<Button asChild size="sm" variant="outline" className="h-7 text-xs">
+						<Button
+							asChild
+							size="sm"
+							variant="outline"
+							className="h-7 text-xs font-mono"
+						>
 							<Link href="/inbox">Inbox</Link>
 						</Button>
 					</div>
 				</div>
 
 				{!isSignedIn && (
-					<Card className="mb-4 border-border/60 bg-muted/20">
-						<CardContent className="pt-4">
-							<div className="flex items-start gap-3">
-								<div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground/5">
-									<GitHubIcon className="size-4 text-foreground/70" />
-								</div>
-								<div className="min-w-0 flex-1">
-									<p className="text-xs font-semibold text-foreground">
-										Sign in to unlock personal attention queues
-									</p>
-									<p className="mt-1 text-[11px] text-muted-foreground">
-										Get your PR workload, review queue, and CI blockers in one
-										place.
-									</p>
-									<Button
-										size="sm"
-										className="mt-3 h-7 text-xs"
-										onClick={() => {
-											authClient.signIn.social({ provider: "github" });
-										}}
-									>
-										<GitHubIcon className="size-3.5" />
-										Sign in with GitHub
-									</Button>
-								</div>
-							</div>
-						</CardContent>
-					</Card>
+					<div className="mb-5 flex items-center gap-3 rounded-lg border border-dashed border-border bg-card/60 px-4 py-3">
+						<GitHubIcon className="size-5 shrink-0 text-foreground/40" />
+						<div className="min-w-0 flex-1">
+							<p className="text-xs font-medium text-foreground">
+								Sign in to see your personal feed
+							</p>
+							<p className="text-[11px] text-muted-foreground">
+								Review requests, your PRs, and what&apos;s changed since you
+								last looked.
+							</p>
+						</div>
+						<Button
+							size="sm"
+							className="h-7 shrink-0 gap-1.5 text-xs"
+							onClick={() => {
+								authClient.signIn.social({ provider: "github" });
+							}}
+						>
+							<GitHubIcon className="size-3" />
+							Sign in
+						</Button>
+					</div>
 				)}
 
-				<div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-					<KpiCard
-						label="Attention"
-						value={visibleAttentionQueue.length}
-						icon={<Eye className="size-3 text-yellow-500" />}
-					/>
-					<KpiCard
-						label="Open PRs"
-						value={totalOpenPrs}
-						icon={<GitPullRequest className="size-3 text-green-500" />}
-					/>
-					<KpiCard
-						label="Open Issues"
-						value={totalOpenIssues}
-						icon={<CircleDot className="size-3 text-blue-500" />}
-					/>
-					<KpiCard
-						label="Failing Checks"
-						value={totalFailing}
-						icon={<AlertTriangle className="size-3 text-red-500" />}
-						alert={totalFailing > 0}
-					/>
-				</div>
-
-				<div className="grid gap-4 xl:grid-cols-12">
-					<div className="space-y-4 xl:col-span-8">
+				{/* ── Main grid ──────────────────────────────── */}
+				<div className="grid gap-5 xl:grid-cols-12">
+					<div className="space-y-5 xl:col-span-8">
 						<AttentionQueueCard
-							items={visibleAttentionQueue}
+							items={filteredQueue}
 							scope={attentionScope}
 							onScopeChange={setAttentionScope}
 						/>
 
-						<div className="grid gap-4 lg:grid-cols-2">
-							<PrListCard
-								title="Your Pull Requests"
-								emptyLabel="No personal PRs in view"
-								icon={<User className="size-3.5 text-green-500" />}
-								prs={data.yourPrs}
-							/>
-							<PrListCard
-								title="Needs Your Attention"
-								emptyLabel="No review requests right now"
-								icon={<Eye className="size-3.5 text-yellow-500" />}
-								prs={data.needsAttentionPrs}
-							/>
-						</div>
+						<PrListCard
+							title="Your Pull Requests"
+							emptyLabel="No open PRs by you"
+							icon={<User className="size-3.5 text-emerald-500" />}
+							prs={data.yourPrs}
+							isOwned
+						/>
 
 						<ActivityCard items={data.recentActivity} />
 					</div>
 
-					<div className="space-y-4 xl:col-span-4">
-						<RepoHealthCard repos={data.repos} />
-						<PrListCard
-							title="Failing PR Checks"
-							emptyLabel="No failing checks in sampled PRs"
-							icon={<AlertTriangle className="size-3.5 text-red-500" />}
-							prs={failingPrs}
-						/>
+					<div className="space-y-5 xl:col-span-4">
+						<RecentReposCard yourPrs={data.yourPrs} />
 						<PrListCard
 							title="Recently Active PRs"
 							emptyLabel="No recent pull requests"
@@ -367,39 +290,6 @@ export function HomeDashboard({
 	);
 }
 
-function KpiCard({
-	label,
-	value,
-	icon,
-	alert = false,
-}: {
-	label: string;
-	value: number;
-	icon: ReactNode;
-	alert?: boolean;
-}) {
-	return (
-		<Card
-			className={cn("border", alert && "border-red-500/30 bg-red-500/[0.03]")}
-		>
-			<CardContent className="pt-3">
-				<div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-					{icon}
-					{label}
-				</div>
-				<p
-					className={cn(
-						"text-xl font-semibold tabular-nums",
-						alert ? "text-red-500" : "text-foreground",
-					)}
-				>
-					{value}
-				</p>
-			</CardContent>
-		</Card>
-	);
-}
-
 function AttentionQueueCard({
 	items,
 	scope,
@@ -409,90 +299,82 @@ function AttentionQueueCard({
 	scope: AttentionScope;
 	onScopeChange: (scope: AttentionScope) => void;
 }) {
-	return (
-		<Card>
-			<CardHeader className="pb-2">
-				<div className="mb-2 flex items-center justify-between gap-2">
-					<CardTitle className="flex items-center gap-1.5 text-sm">
-						<Eye className="size-4 text-yellow-500" />
-						Attention Queue
-					</CardTitle>
-					<Badge variant="outline" className="text-[10px]">
-						{items.length}
-					</Badge>
-				</div>
-				<div className="flex flex-wrap gap-1.5">
-					<Button
-						size="sm"
-						variant={scope === "all" ? "default" : "outline"}
-						className="h-6 px-2 text-[10px]"
-						onClick={() => onScopeChange("all")}
-					>
-						All
-					</Button>
-					<Button
-						size="sm"
-						variant={scope === "my" ? "default" : "outline"}
-						className="h-6 px-2 text-[10px]"
-						onClick={() => onScopeChange("my")}
-					>
-						My work
-					</Button>
-					<Button
-						size="sm"
-						variant={scope === "failing" ? "default" : "outline"}
-						className="h-6 px-2 text-[10px]"
-						onClick={() => onScopeChange("failing")}
-					>
-						Failing checks
-					</Button>
-				</div>
-			</CardHeader>
-			<CardContent>
-				{items.length === 0 && (
-					<p className="text-xs text-muted-foreground">
-						No urgent items right now. Nice.
-					</p>
-				)}
+	const scopeOptions: Array<{ value: AttentionScope; label: string }> = [
+		{ value: "all", label: "All" },
+		{ value: "reviews", label: "Reviews" },
+		{ value: "yours", label: "Yours" },
+	];
 
-				{items.length > 0 && (
-					<div className="divide-y rounded-md border">
-						{items.slice(0, 14).map((item) => (
-							<Link
-								key={item.id}
-								href={item.path}
-								className="flex items-start gap-2 px-3 py-2 no-underline transition-colors hover:bg-muted"
-							>
-								<div
-									className={cn(
-										"mt-1 size-2.5 rounded-full shrink-0",
-										item.lastCheckConclusion === "failure"
-											? "bg-red-500"
-											: "bg-yellow-500",
-									)}
-								/>
-								<div className="min-w-0 flex-1">
-									<p className="truncate text-xs font-medium text-foreground">
-										{item.title}
-									</p>
-									<div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-										<span>{item.repoLabel}</span>
-										<span>#{item.number}</span>
-										<span>{formatRelative(item.githubUpdatedAt)}</span>
-									</div>
+	return (
+		<section>
+			<div className="mb-2 flex items-center justify-between gap-2">
+				<h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+					<Eye className="size-3.5 text-amber-500" />
+					Needs Attention
+					{items.length > 0 && (
+						<span className="font-mono text-[10px] font-normal text-muted-foreground/50">
+							{items.length}
+						</span>
+					)}
+				</h2>
+				<div className="flex gap-px rounded-md border border-border/80 bg-border/40 overflow-hidden">
+					{scopeOptions.map((opt) => (
+						<button
+							key={opt.value}
+							type="button"
+							className={cn(
+								"px-2.5 py-1 text-[10px] font-medium transition-colors",
+								scope === opt.value
+									? "bg-foreground text-background"
+									: "bg-card text-muted-foreground hover:text-foreground",
+							)}
+							onClick={() => onScopeChange(opt.value)}
+						>
+							{opt.label}
+						</button>
+					))}
+				</div>
+			</div>
+
+			{items.length === 0 && (
+				<div className="rounded-lg border border-dashed border-border/60 bg-card/40 px-4 py-6 text-center">
+					<p className="font-mono text-[11px] text-muted-foreground/50">
+						Nothing needs your attention right now.
+					</p>
+				</div>
+			)}
+
+			{items.length > 0 && (
+				<div className="overflow-hidden rounded-lg border border-border/80">
+					{items.slice(0, 14).map((item, i) => (
+						<Link
+							key={item.id}
+							href={item.path}
+							className={cn(
+								"flex items-center gap-3 px-3 py-2.5 no-underline transition-colors hover:bg-accent/60",
+								i > 0 && "border-t border-border/50",
+							)}
+						>
+							<div className="min-w-0 flex-1">
+								<p className="truncate text-[13px] font-medium text-foreground leading-tight">
+									{item.title}
+								</p>
+								<div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/60">
+									<span>{item.repoLabel}</span>
+									<span className="text-border">|</span>
+									<span>#{item.number}</span>
+									<span className="text-border">|</span>
+									<span>{formatRelative(item.githubUpdatedAt)}</span>
 								</div>
-								<Badge
-									variant="outline"
-									className="text-[9px] text-muted-foreground"
-								>
-									{item.reason}
-								</Badge>
-							</Link>
-						))}
-					</div>
-				)}
-			</CardContent>
-		</Card>
+							</div>
+							<span className="shrink-0 font-mono text-[10px] text-muted-foreground/50">
+								{item.reason}
+							</span>
+						</Link>
+					))}
+				</div>
+			)}
+		</section>
 	);
 }
 
@@ -501,177 +383,194 @@ function PrListCard({
 	icon,
 	prs,
 	emptyLabel,
+	isOwned = false,
 }: {
 	title: string;
 	icon: ReactNode;
 	prs: ReadonlyArray<DashboardPrItem>;
 	emptyLabel: string;
+	isOwned?: boolean;
 }) {
 	return (
-		<Card>
-			<CardHeader className="pb-2">
-				<div className="flex items-center justify-between gap-2">
-					<CardTitle className="flex items-center gap-1.5 text-sm">
-						{icon}
-						{title}
-					</CardTitle>
-					{prs.length > 0 && (
-						<Badge variant="outline" className="text-[10px]">
-							{prs.length}
-						</Badge>
-					)}
-				</div>
-			</CardHeader>
-			<CardContent>
-				{prs.length === 0 && (
-					<p className="text-xs text-muted-foreground">{emptyLabel}</p>
-				)}
-
+		<section>
+			<div className="mb-2 flex items-center justify-between gap-2">
+				<h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+					{icon}
+					{title}
+				</h2>
 				{prs.length > 0 && (
-					<div className="divide-y rounded-md border">
-						{prs.slice(0, 8).map((pr) => (
-							<Link
-								key={`${pr.ownerLogin}/${pr.repoName}#${pr.number}`}
-								href={`/${pr.ownerLogin}/${pr.repoName}/pulls/${pr.number}`}
-								className="flex items-start gap-2 px-3 py-2 no-underline transition-colors hover:bg-muted"
-							>
-								<PrStateIcon state={pr.state} draft={pr.draft} />
-								<div className="min-w-0 flex-1">
-									<p className="truncate text-xs font-medium text-foreground">
-										{pr.title}
-									</p>
-									<div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-										<span className="truncate">
-											{pr.ownerLogin}/{pr.repoName}
-										</span>
-										<span>#{pr.number}</span>
-										<span>{formatRelative(pr.githubUpdatedAt)}</span>
-										{pr.commentCount > 0 && (
+					<span className="font-mono text-[10px] text-muted-foreground/50">
+						{prs.length}
+					</span>
+				)}
+			</div>
+
+			{prs.length === 0 && (
+				<div className="rounded-lg border border-dashed border-border/60 bg-card/40 px-4 py-5 text-center">
+					<p className="font-mono text-[11px] text-muted-foreground/50">
+						{emptyLabel}
+					</p>
+				</div>
+			)}
+
+			{prs.length > 0 && (
+				<div className="overflow-hidden rounded-lg border border-border/80">
+					{prs.slice(0, 8).map((pr, i) => (
+						<Link
+							key={`${pr.ownerLogin}/${pr.repoName}#${pr.number}`}
+							href={`/${pr.ownerLogin}/${pr.repoName}/pulls/${pr.number}`}
+							className={cn(
+								"flex items-center gap-2.5 px-3 py-2 no-underline transition-colors hover:bg-accent/60",
+								i > 0 && "border-t border-border/50",
+							)}
+						>
+							<PrStateIcon state={pr.state} draft={pr.draft} />
+							<div className="min-w-0 flex-1">
+								<p className="truncate text-[13px] font-medium text-foreground leading-tight">
+									{pr.title}
+								</p>
+								<div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/60">
+									<span className="truncate">
+										{pr.ownerLogin}/{pr.repoName}
+									</span>
+									<span className="text-border">|</span>
+									<span>#{pr.number}</span>
+									<span className="text-border">|</span>
+									<span>{formatRelative(pr.githubUpdatedAt)}</span>
+									{pr.commentCount > 0 && (
+										<>
+											<span className="text-border">|</span>
 											<span className="flex items-center gap-0.5">
 												<MessageCircle className="size-2.5" />
 												{pr.commentCount}
 											</span>
-										)}
-									</div>
+										</>
+									)}
 								</div>
-								{pr.lastCheckConclusion === "failure" && (
-									<AlertTriangle className="mt-0.5 size-3 text-red-500" />
-								)}
-							</Link>
-						))}
-					</div>
-				)}
-			</CardContent>
-		</Card>
+							</div>
+							{isOwned && pr.lastCheckConclusion === "failure" && (
+								<span className="shrink-0 font-mono text-[10px] text-red-500/70">
+									CI failing
+								</span>
+							)}
+						</Link>
+					))}
+				</div>
+			)}
+		</section>
 	);
 }
 
 function ActivityCard({ items }: { items: ReadonlyArray<ActivityItem> }) {
 	return (
-		<Card>
-			<CardHeader className="pb-2">
-				<CardTitle className="flex items-center gap-1.5 text-sm">
-					<Activity className="size-4 text-blue-500" />
+		<section>
+			<div className="mb-2">
+				<h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+					<Activity className="size-3.5 text-sky-500" />
 					Recent Activity
-				</CardTitle>
-			</CardHeader>
-			<CardContent>
-				{items.length === 0 && (
-					<p className="text-xs text-muted-foreground">
+				</h2>
+			</div>
+
+			{items.length === 0 && (
+				<div className="rounded-lg border border-dashed border-border/60 bg-card/40 px-4 py-5 text-center">
+					<p className="font-mono text-[11px] text-muted-foreground/50">
 						No recent activity yet.
 					</p>
-				)}
-				{items.length > 0 && (
-					<div className="divide-y rounded-md border">
-						{items.slice(0, 14).map((activity, index) => (
-							<ActivityRow
-								key={`${activity.ownerLogin}/${activity.repoName}-${activity.createdAt}-${index}`}
-								activity={activity}
-							/>
-						))}
-					</div>
-				)}
-			</CardContent>
-		</Card>
+				</div>
+			)}
+
+			{items.length > 0 && (
+				<div className="overflow-hidden rounded-lg border border-border/80">
+					{items.slice(0, 14).map((activity, index) => (
+						<ActivityRow
+							key={`${activity.ownerLogin}/${activity.repoName}-${activity.createdAt}-${index}`}
+							activity={activity}
+							isFirst={index === 0}
+						/>
+					))}
+				</div>
+			)}
+		</section>
 	);
 }
 
-function RepoHealthCard({ repos }: { repos: ReadonlyArray<RepoSummary> }) {
-	const rankedRepos = [...repos].sort((a, b) => {
-		const scoreA =
-			a.failingCheckCount * 20 + a.openPrCount * 4 + a.openIssueCount;
-		const scoreB =
-			b.failingCheckCount * 20 + b.openPrCount * 4 + b.openIssueCount;
-		return scoreB - scoreA;
-	});
+function RecentReposCard({
+	yourPrs,
+}: {
+	yourPrs: ReadonlyArray<DashboardPrItem>;
+}) {
+	// Derive recent repos from the user's PRs — deduped, ordered by most recent activity
+	const seen = new Set<string>();
+	const recentRepos: Array<{
+		key: string;
+		ownerLogin: string;
+		repoName: string;
+		lastActivity: number;
+	}> = [];
+
+	// yourPrs is already sorted by githubUpdatedAt desc from the server
+	for (const pr of yourPrs) {
+		const key = `${pr.ownerLogin}/${pr.repoName}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		recentRepos.push({
+			key,
+			ownerLogin: pr.ownerLogin,
+			repoName: pr.repoName,
+			lastActivity: pr.githubUpdatedAt,
+		});
+		if (recentRepos.length >= 5) break;
+	}
 
 	return (
-		<Card>
-			<CardHeader className="pb-2">
-				<div className="flex items-center justify-between gap-2">
-					<CardTitle className="flex items-center gap-1.5 text-sm">
-						<GitBranch className="size-4 text-muted-foreground" />
-						Repo Health
-					</CardTitle>
-					<Badge variant="outline" className="text-[10px]">
-						{repos.length}
-					</Badge>
-				</div>
-			</CardHeader>
-			<CardContent>
-				{repos.length === 0 && (
-					<p className="text-xs text-muted-foreground">
-						No repositories connected yet.
+		<section>
+			<div className="mb-2">
+				<h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+					<GitBranch className="size-3.5 text-muted-foreground" />
+					Recent Repositories
+				</h2>
+			</div>
+
+			{recentRepos.length === 0 && (
+				<div className="rounded-lg border border-dashed border-border/60 bg-card/40 px-4 py-5 text-center">
+					<p className="font-mono text-[11px] text-muted-foreground/50">
+						Open a PR to see your repos here.
 					</p>
-				)}
-				{repos.length > 0 && (
-					<div className="divide-y rounded-md border">
-						{rankedRepos.slice(0, 12).map((repo) => (
-							<Link
-								key={repo.fullName}
-								href={`/${repo.ownerLogin}/${repo.name}/pulls`}
-								className="block px-3 py-2 no-underline transition-colors hover:bg-muted"
-							>
-								<div className="flex items-start justify-between gap-2">
-									<div className="min-w-0">
-										<p className="truncate text-xs font-semibold text-foreground">
-											{repo.fullName}
-										</p>
-										<div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-											<span>{repo.openPrCount} PRs</span>
-											<span>{repo.openIssueCount} issues</span>
-											{repo.lastPushAt !== null && (
-												<span>{formatRelative(repo.lastPushAt)}</span>
-											)}
-										</div>
-									</div>
-									<div className="flex items-center gap-1">
-										{repo.failingCheckCount > 0 ? (
-											<Badge variant="destructive" className="text-[9px]">
-												{repo.failingCheckCount} failing
-											</Badge>
-										) : (
-											<Badge
-												variant="outline"
-												className="text-[9px] text-green-600"
-											>
-												<CheckCircle2 className="size-2.5" />
-												healthy
-											</Badge>
-										)}
-										<ArrowRight className="size-3 text-muted-foreground" />
-									</div>
-								</div>
-							</Link>
-						))}
-					</div>
-				)}
-			</CardContent>
-		</Card>
+				</div>
+			)}
+
+			{recentRepos.length > 0 && (
+				<div className="overflow-hidden rounded-lg border border-border/80">
+					{recentRepos.map((repo, i) => (
+						<Link
+							key={repo.key}
+							href={`/${repo.ownerLogin}/${repo.repoName}/pulls`}
+							className={cn(
+								"flex items-center justify-between gap-2 px-3 py-2 no-underline transition-colors hover:bg-accent/60",
+								i > 0 && "border-t border-border/50",
+							)}
+						>
+							<p className="truncate text-[13px] font-medium text-foreground leading-tight">
+								{repo.key}
+							</p>
+							<span className="shrink-0 font-mono text-[10px] text-muted-foreground/40">
+								{formatRelative(repo.lastActivity)}
+							</span>
+						</Link>
+					))}
+				</div>
+			)}
+		</section>
 	);
 }
 
-function ActivityRow({ activity }: { activity: ActivityItem }) {
+function ActivityRow({
+	activity,
+	isFirst,
+}: {
+	activity: ActivityItem;
+	isFirst: boolean;
+}) {
 	const href = (() => {
 		const base = `/${activity.ownerLogin}/${activity.repoName}`;
 		if (activity.entityNumber === null) return base;
@@ -695,34 +594,41 @@ function ActivityRow({ activity }: { activity: ActivityItem }) {
 	return (
 		<Link
 			href={href}
-			className="flex items-center gap-2.5 px-3 py-2 no-underline transition-colors hover:bg-muted"
+			className={cn(
+				"flex items-center gap-3 px-3 py-2 no-underline transition-colors hover:bg-accent/60",
+				!isFirst && "border-t border-border/50",
+			)}
 		>
 			{activity.actorAvatarUrl !== null ? (
-				<Avatar className="size-5">
+				<Avatar className="size-5 ring-1 ring-border/50">
 					<AvatarImage
 						src={activity.actorAvatarUrl}
 						alt={activity.actorLogin ?? ""}
 					/>
-					<AvatarFallback className="text-[8px]">
+					<AvatarFallback className="text-[8px] font-mono">
 						{activity.actorLogin?.[0]?.toUpperCase() ?? "?"}
 					</AvatarFallback>
 				</Avatar>
 			) : (
-				<div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted">
-					<Activity className="size-3 text-muted-foreground" />
+				<div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted/60">
+					<Activity className="size-2.5 text-muted-foreground/50" />
 				</div>
 			)}
 			<div className="min-w-0 flex-1">
-				<p className="truncate text-xs text-foreground">
+				<p className="truncate text-[13px] text-foreground leading-tight">
 					<span className="font-medium">
 						{activity.actorLogin ?? "Someone"}
 					</span>{" "}
-					{activityVerb(activity.activityType)} {activity.title}
+					<span className="text-muted-foreground">
+						{activityVerb(activity.activityType)}
+					</span>{" "}
+					{activity.title}
 				</p>
-				<div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+				<div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/60">
 					<span>
 						{activity.ownerLogin}/{activity.repoName}
 					</span>
+					<span className="text-border">|</span>
 					<span>{formatRelative(activity.createdAt)}</span>
 				</div>
 			</div>
@@ -775,27 +681,18 @@ function PrStateIcon({
 
 export function DashboardSkeleton() {
 	return (
-		<div className="h-full overflow-y-auto px-4 py-4 md:px-6 md:py-5">
-			<Skeleton className="mb-4 h-6 w-48" />
-			<div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-				<Skeleton className="h-20" />
-				<Skeleton className="h-20" />
-				<Skeleton className="h-20" />
-				<Skeleton className="h-20" />
-			</div>
-			<div className="grid gap-4 xl:grid-cols-12">
-				<div className="space-y-4 xl:col-span-8">
-					<Skeleton className="h-60" />
-					<div className="grid gap-4 lg:grid-cols-2">
-						<Skeleton className="h-72" />
-						<Skeleton className="h-72" />
-					</div>
-					<Skeleton className="h-72" />
+		<div className="h-full overflow-y-auto bg-dotgrid px-4 py-5 md:px-8 md:py-6">
+			<Skeleton className="mb-2 h-5 w-44" />
+			<Skeleton className="mb-6 h-3 w-72" />
+			<div className="grid gap-5 xl:grid-cols-12">
+				<div className="space-y-5 xl:col-span-8">
+					<Skeleton className="h-56 rounded-lg" />
+					<Skeleton className="h-64 rounded-lg" />
+					<Skeleton className="h-64 rounded-lg" />
 				</div>
-				<div className="space-y-4 xl:col-span-4">
-					<Skeleton className="h-72" />
-					<Skeleton className="h-72" />
-					<Skeleton className="h-72" />
+				<div className="space-y-5 xl:col-span-4">
+					<Skeleton className="h-64 rounded-lg" />
+					<Skeleton className="h-64 rounded-lg" />
 				</div>
 			</div>
 		</div>

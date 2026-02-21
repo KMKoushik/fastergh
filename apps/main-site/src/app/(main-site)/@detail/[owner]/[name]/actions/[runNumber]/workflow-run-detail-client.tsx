@@ -57,6 +57,7 @@ type WorkflowJob = {
 type WorkflowRunDetail = {
 	readonly repositoryId: number;
 	readonly githubRunId: number;
+	readonly workflowId: number;
 	readonly workflowName: string | null;
 	readonly runNumber: number;
 	readonly runAttempt: number;
@@ -187,6 +188,8 @@ export function WorkflowRunDetailClient({
 					owner={owner}
 					name={name}
 					githubRunId={run.githubRunId}
+					workflowId={run.workflowId}
+					headBranch={run.headBranch}
 					status={run.status}
 					conclusion={run.conclusion}
 				/>
@@ -506,7 +509,7 @@ function JobLogsPanel({
 // Run control bar — rerun / rerun failed / cancel
 // ---------------------------------------------------------------------------
 
-type ControlAction = "rerun" | "rerunFailed" | "cancel";
+type ControlAction = "rerun" | "rerunFailed" | "cancel" | "dispatch";
 
 type ControlButtonState = "idle" | "pending" | "success" | "error";
 
@@ -523,12 +526,16 @@ function RunControlBar({
 	owner,
 	name,
 	githubRunId,
+	workflowId,
+	headBranch,
 	status,
 	conclusion,
 }: {
 	owner: string;
 	name: string;
 	githubRunId: number;
+	workflowId: number;
+	headBranch: string | null;
 	status: string | null;
 	conclusion: string | null;
 }) {
@@ -541,10 +548,15 @@ function RunControlBar({
 	const [cancelResult, cancelRun] = useAtom(
 		githubActions.cancelWorkflowRun.call,
 	);
+	const [dispatchResult, dispatchWorkflow] = useAtom(
+		githubActions.dispatchWorkflow.call,
+	);
+	const [dispatchRef, setDispatchRef] = useState(headBranch ?? "main");
 
 	const rerunState = deriveControlState(rerunResult);
 	const rerunFailedState = deriveControlState(rerunFailedResult);
 	const cancelState = deriveControlState(cancelResult);
+	const dispatchState = deriveControlState(dispatchResult);
 
 	const isRunning = status === "in_progress" || status === "queued";
 	const isCompleted = status === "completed";
@@ -562,11 +574,30 @@ function RunControlBar({
 		cancelRun({ ownerLogin: owner, name, githubRunId });
 	}, [cancelRun, owner, name, githubRunId]);
 
+	const handleDispatch = useCallback(() => {
+		const trimmedRef = dispatchRef.trim();
+		if (trimmedRef.length === 0) return;
+		dispatchWorkflow({
+			ownerLogin: owner,
+			name,
+			workflowId,
+			ref: trimmedRef,
+		});
+	}, [dispatchRef, dispatchWorkflow, name, owner, workflowId]);
+
+	useEffect(() => {
+		if (headBranch === null) return;
+		if (dispatchRef.trim().length > 0) return;
+		setDispatchRef(headBranch);
+	}, [dispatchRef, headBranch]);
+
 	const showRerun = isCompleted;
 	const showRerunFailed = isCompleted && hasFailed;
 	const showCancel = isRunning;
+	const showDispatch = workflowId > 0;
+	const dispatchRefEmpty = dispatchRef.trim().length === 0;
 
-	if (!showRerun && !showRerunFailed && !showCancel) {
+	if (!showRerun && !showRerunFailed && !showCancel && !showDispatch) {
 		return null;
 	}
 
@@ -574,6 +605,27 @@ function RunControlBar({
 		<>
 			<Separator className="mt-3" />
 			<div className="mt-3 flex items-center gap-1.5">
+				{showDispatch && (
+					<div className="flex items-center gap-1.5">
+						<Input
+							value={dispatchRef}
+							onChange={(event) => setDispatchRef(event.target.value)}
+							placeholder="Branch or tag"
+							className="h-7 w-32 px-2 text-[11px]"
+							disabled={dispatchState === "pending"}
+						/>
+						<ControlButton
+							action="dispatch"
+							state={dispatchState}
+							onClick={handleDispatch}
+							icon={<Play className="size-3" />}
+							label="Dispatch"
+							tooltip="Trigger this workflow via workflow_dispatch"
+							variant="primary"
+							disabled={dispatchRefEmpty}
+						/>
+					</div>
+				)}
 				{showRerunFailed && (
 					<ControlButton
 						action="rerunFailed"
@@ -620,6 +672,7 @@ function ControlButton({
 	label,
 	tooltip,
 	variant,
+	disabled,
 }: {
 	action: ControlAction;
 	state: ControlButtonState;
@@ -628,8 +681,9 @@ function ControlButton({
 	label: string;
 	tooltip: string;
 	variant: "primary" | "secondary" | "destructive";
+	disabled?: boolean;
 }) {
-	const isDisabled = state === "pending" || state === "success";
+	const isDisabled = state === "pending" || state === "success" || disabled;
 
 	const variantClasses = {
 		primary: cn(
@@ -694,6 +748,8 @@ function getProgressLabel(action: ControlAction): string {
 			return "Re-running...";
 		case "cancel":
 			return "Cancelling...";
+		case "dispatch":
+			return "Dispatching...";
 	}
 }
 
@@ -705,6 +761,8 @@ function getSuccessLabel(action: ControlAction): string {
 			return "Re-run queued";
 		case "cancel":
 			return "Cancelled";
+		case "dispatch":
+			return "Dispatch queued";
 	}
 }
 

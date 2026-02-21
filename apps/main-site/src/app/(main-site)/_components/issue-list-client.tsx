@@ -116,33 +116,14 @@ export function IssueListClient({
 	const pendingNavRef = useRef<"next" | null>(null);
 	const prevCountRef = useRef(filteredIssues.length);
 
-	useEffect(() => {
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key !== "/") return;
-
-			const target = event.target;
-			if (target instanceof HTMLElement) {
-				const tag = target.tagName.toLowerCase();
-				if (
-					tag === "input" ||
-					tag === "textarea" ||
-					target.getAttribute("contenteditable") === "true"
-				) {
-					return;
-				}
-			}
-
-			event.preventDefault();
-			const input = document.getElementById(filterInputId);
-			if (input instanceof HTMLInputElement) {
-				input.focus();
-				input.select();
-			}
+	useHotkey("/", (event) => {
+		event.preventDefault();
+		const input = document.getElementById(filterInputId);
+		if (input instanceof HTMLInputElement) {
+			input.focus();
+			input.select();
 		}
-
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [filterInputId]);
+	});
 
 	useEffect(() => {
 		if (

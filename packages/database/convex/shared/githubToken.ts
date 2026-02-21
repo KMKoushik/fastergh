@@ -214,6 +214,38 @@ export const lookupGitHubTokenByUserIdConfect = (
 	});
 
 // ---------------------------------------------------------------------------
+// 3b. Look up token by provider ID and user ID (Confect)
+// ---------------------------------------------------------------------------
+
+/**
+ * Look up an OAuth token for a specific Better Auth provider and user.
+ * Used for the classic OAuth "github-notifications" provider whose token
+ * can access the GitHub Notifications API (unlike GitHub App ghu_ tokens).
+ */
+export const lookupTokenByProviderConfect = (
+	runQuery: (
+		query: typeof components.betterAuth.adapter.findOne,
+		args: {
+			model: "account";
+			where: Array<{ field: string; value: string }>;
+		},
+	) => Effect.Effect<unknown>,
+	providerId: string,
+	userId: string,
+): Effect.Effect<string, NoGitHubTokenError> =>
+	Effect.gen(function* () {
+		const account = yield* runQuery(components.betterAuth.adapter.findOne, {
+			model: "account" as const,
+			where: [
+				{ field: "providerId", value: providerId },
+				{ field: "userId", value: userId },
+			],
+		});
+
+		return yield* extractToken(account, userId);
+	});
+
+// ---------------------------------------------------------------------------
 // 4. Resolve token for a repo — user token preferred, installation fallback
 // ---------------------------------------------------------------------------
 
