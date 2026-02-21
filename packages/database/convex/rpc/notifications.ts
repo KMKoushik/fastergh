@@ -299,7 +299,8 @@ syncNotificationsDef.implement(() =>
 		// GitHub App tokens (ghu_) can't access /notifications — need a
 		// classic OAuth token from the "github-notifications" provider.
 		const token = yield* lookupTokenByProviderConfect(
-			ctx.runQuery,
+			(query, params) => ctx.runQuery(query, params),
+			(mutation, params) => ctx.runMutation(mutation, params),
 			"github-notifications",
 			userId,
 		).pipe(
@@ -490,7 +491,8 @@ markNotificationReadRemoteDef.implement((args) =>
 		const ctx = yield* ConfectActionCtx;
 
 		const token = yield* lookupTokenByProviderConfect(
-			ctx.runQuery,
+			(query, params) => ctx.runQuery(query, params),
+			(mutation, params) => ctx.runMutation(mutation, params),
 			"github-notifications",
 			args.actingUserId,
 		);

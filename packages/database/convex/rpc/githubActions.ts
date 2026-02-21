@@ -857,7 +857,8 @@ fetchPrDiffDef.implement((args) =>
 		if (Option.isNone(identity)) return null;
 
 		const token = yield* lookupGitHubTokenByUserIdConfect(
-			ctx.runQuery,
+			(query, params) => ctx.runQuery(query, params),
+			(mutation, params) => ctx.runMutation(mutation, params),
 			identity.value.subject,
 		);
 		const github = yield* Effect.provide(
@@ -892,7 +893,8 @@ fetchWorkflowJobLogsDef.implement((args) =>
 		if (Option.isNone(identity)) return null;
 
 		const token = yield* lookupGitHubTokenByUserIdConfect(
-			ctx.runQuery,
+			(query, params) => ctx.runQuery(query, params),
+			(mutation, params) => ctx.runMutation(mutation, params),
 			identity.value.subject,
 		);
 		const github = yield* Effect.provide(
@@ -1057,7 +1059,8 @@ const resolveActionsGitHubClient = () =>
 			});
 		}
 		const token = yield* lookupGitHubTokenByUserIdConfect(
-			ctx.runQuery,
+			(query, params) => ctx.runQuery(query, params),
+			(mutation, params) => ctx.runMutation(mutation, params),
 			identity.value.subject,
 		).pipe(Effect.catchAll((e) => new NotAuthenticated({ reason: e.reason })));
 		return yield* Effect.provide(

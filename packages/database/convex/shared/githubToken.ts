@@ -5,20 +5,19 @@
  *
  * Four lookup patterns:
  * 1. `getUserGitHubToken(ctx)` — for vanilla actions with a user session.
- * 2. `lookupGitHubTokenByUserId(runQuery, userId)` — for vanilla Convex
- *    actions (bootstrap steps) that don't have a user session but know
- *    the `connectedByUserId` from the repo record.
- * 3. `lookupGitHubTokenByUserIdConfect(confectRunQuery, userId)` — for
- *    Confect actions/mutations where `ctx.runQuery` returns `Effect`.
- * 4. `resolveRepoToken(runQuery, connectedByUserId, installationId)` — tries
- *    the user token first, falls back to the GitHub App installation token.
+ * 2. `lookupGitHubTokenByUserId(runQuery, runMutation, userId)` — for
+ *    vanilla Convex actions that know the Better Auth user ID.
+ * 3. `lookupGitHubTokenByUserIdConfect(runQuery, runMutation, userId)` —
+ *    Confect variant where `runQuery` / `runMutation` return `Effect`.
+ * 4. `resolveRepoToken(runQuery, connectedByUserId, installationId)` —
+ *    background repo sync path using installation tokens.
  */
 import type {
 	FunctionReference,
 	GenericActionCtx,
 	GenericDataModel,
 } from "convex/server";
-import { Data, Effect } from "effect";
+import { Data, Effect, Either, Schema } from "effect";
 import { components } from "../_generated/api";
 import { authComponent } from "../auth";
 import {
@@ -39,15 +38,6 @@ export class NoGitHubTokenError extends Data.TaggedError("NoGitHubTokenError")<{
 // Types
 // ---------------------------------------------------------------------------
 
-/**
- * Narrow callback type for the `runQuery` parameter of `lookupGitHubTokenByUserId`.
- *
- * We intentionally avoid using the full `GenericActionCtx<DataModel>["runQuery"]`
- * because of Convex's DataModel variance issue: a specific-DataModel `runQuery`
- * isn't assignable to `GenericDataModel`'s version. By using a narrow callback
- * type that matches the *exact* call we make (component query `findOne`), both
- * specific- and generic-DataModel `ctx.runQuery` satisfy this signature.
- */
 type RunQueryFn = <Output>(
 	query: FunctionReference<
 		"query",
@@ -58,21 +48,297 @@ type RunQueryFn = <Output>(
 	args: Record<string, unknown>,
 ) => Promise<Output>;
 
-/**
- * Confect variant: `runQuery` that returns `Effect.Effect<Output>` instead of
- * `Promise<Output>`, as used in `ConfectActionCtx` / `ConfectMutationCtx`.
- */
+type RunMutationFn = <Output>(
+	mutation: FunctionReference<
+		"mutation",
+		"internal",
+		Record<string, unknown>,
+		Output
+	>,
+	args: Record<string, unknown>,
+) => Promise<Output>;
+
+type AccountWhereField = "providerId" | "userId";
+
+type ConfectFindOneRunQuery = (
+	query: typeof components.betterAuth.adapter.findOne,
+	args: {
+		model: "account";
+		where: Array<{ field: AccountWhereField; value: string }>;
+	},
+) => Effect.Effect<unknown>;
+
+type ConfectUpdateOneRunMutation = (
+	mutation: typeof components.betterAuth.adapter.updateOne,
+	args: {
+		input: {
+			model: "account";
+			update: {
+				accessToken?: string | null;
+				refreshToken?: string | null;
+				accessTokenExpiresAt?: number | null;
+				refreshTokenExpiresAt?: number | null;
+				scope?: string | null;
+				updatedAt?: number;
+			};
+			where: Array<{ field: AccountWhereField; value: string }>;
+		};
+	},
+) => Effect.Effect<unknown>;
+
+const OAuthAccountSchema = Schema.Struct({
+	providerId: Schema.String,
+	userId: Schema.String,
+	accountId: Schema.String,
+	accessToken: Schema.optional(Schema.NullOr(Schema.String)),
+	refreshToken: Schema.optional(Schema.NullOr(Schema.String)),
+	accessTokenExpiresAt: Schema.optional(Schema.NullOr(Schema.Number)),
+	refreshTokenExpiresAt: Schema.optional(Schema.NullOr(Schema.Number)),
+	scope: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const decodeOAuthAccount = Schema.decodeUnknownEither(OAuthAccountSchema);
+
+const GitHubTokenRefreshResponseSchema = Schema.Struct({
+	access_token: Schema.optional(Schema.String),
+	refresh_token: Schema.optional(Schema.String),
+	expires_in: Schema.optional(Schema.Number),
+	refresh_token_expires_in: Schema.optional(Schema.Number),
+	scope: Schema.optional(Schema.String),
+	error: Schema.optional(Schema.String),
+	error_description: Schema.optional(Schema.String),
+});
+
+const decodeGitHubTokenRefreshResponse = Schema.decodeUnknownEither(
+	GitHubTokenRefreshResponseSchema,
+);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Internal helper that queries the better-auth component adapter.
- * Accepts a `runQuery` callback with a narrow signature so both vanilla
- * Convex and Confect action contexts are assignable.
- */
+const ACCESS_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+const getOAuthClientCredentials = (providerId: string) => {
+	if (providerId === "github") {
+		const clientId = process.env.GITHUB_CLIENT_ID ?? "";
+		const clientSecret = process.env.GITHUB_CLIENT_SECRET ?? "";
+		if (clientId.length === 0 || clientSecret.length === 0) {
+			return null;
+		}
+		return { clientId, clientSecret };
+	}
+
+	if (providerId === "github-notifications") {
+		const clientId = process.env.GITHUB_NOTIFICATIONS_CLIENT_ID ?? "";
+		const clientSecret = process.env.GITHUB_NOTIFICATIONS_CLIENT_SECRET ?? "";
+		if (clientId.length === 0 || clientSecret.length === 0) {
+			return null;
+		}
+		return { clientId, clientSecret };
+	}
+
+	return null;
+};
+
+const isTokenInRefreshWindow = (accessTokenExpiresAt: number | null) => {
+	if (accessTokenExpiresAt === null) {
+		return false;
+	}
+
+	return accessTokenExpiresAt - ACCESS_TOKEN_REFRESH_BUFFER_MS <= Date.now();
+};
+
+const isTokenExpired = (accessTokenExpiresAt: number | null) => {
+	if (accessTokenExpiresAt === null) {
+		return false;
+	}
+
+	return accessTokenExpiresAt <= Date.now();
+};
+
+const refreshGitHubOAuthToken = (providerId: string, refreshToken: string) =>
+	Effect.gen(function* () {
+		const credentials = getOAuthClientCredentials(providerId);
+		if (credentials === null) {
+			return yield* new NoGitHubTokenError({
+				reason: `OAuth credentials are missing for provider ${providerId}`,
+			});
+		}
+
+		const body = new URLSearchParams({
+			client_id: credentials.clientId,
+			client_secret: credentials.clientSecret,
+			grant_type: "refresh_token",
+			refresh_token: refreshToken,
+		});
+
+		const response = yield* Effect.tryPromise({
+			try: () =>
+				fetch("https://github.com/login/oauth/access_token", {
+					method: "POST",
+					headers: {
+						Accept: "application/json",
+						"Content-Type": "application/x-www-form-urlencoded",
+					},
+					body,
+				}),
+			catch: (error) =>
+				new NoGitHubTokenError({
+					reason: `Failed to refresh OAuth token for ${providerId}: ${String(error)}`,
+				}),
+		});
+
+		if (!response.ok) {
+			const responseText = yield* Effect.tryPromise({
+				try: () => response.text(),
+				catch: (error) =>
+					new NoGitHubTokenError({
+						reason: `Failed to read OAuth refresh error response for ${providerId}: ${String(error)}`,
+					}),
+			});
+			return yield* new NoGitHubTokenError({
+				reason: `GitHub OAuth token refresh failed (${response.status}): ${responseText}`,
+			});
+		}
+
+		const responseJson = yield* Effect.tryPromise({
+			try: () => response.json(),
+			catch: (error) =>
+				new NoGitHubTokenError({
+					reason: `Failed to parse OAuth refresh response for ${providerId}: ${String(error)}`,
+				}),
+		});
+
+		const decoded = decodeGitHubTokenRefreshResponse(responseJson);
+		if (Either.isLeft(decoded)) {
+			return yield* new NoGitHubTokenError({
+				reason: `GitHub OAuth refresh response was invalid for ${providerId}`,
+			});
+		}
+
+		if (decoded.right.error !== undefined) {
+			return yield* new NoGitHubTokenError({
+				reason: `GitHub OAuth refresh failed for ${providerId}: ${decoded.right.error_description ?? decoded.right.error}`,
+			});
+		}
+
+		if (decoded.right.access_token === undefined) {
+			return yield* new NoGitHubTokenError({
+				reason: `GitHub OAuth refresh did not return an access token for ${providerId}`,
+			});
+		}
+
+		const now = Date.now();
+		return {
+			accessToken: decoded.right.access_token,
+			refreshToken: decoded.right.refresh_token ?? null,
+			scope: decoded.right.scope ?? null,
+			accessTokenExpiresAt:
+				decoded.right.expires_in !== undefined
+					? now + decoded.right.expires_in * 1000
+					: null,
+			refreshTokenExpiresAt:
+				decoded.right.refresh_token_expires_in !== undefined
+					? now + decoded.right.refresh_token_expires_in * 1000
+					: null,
+		};
+	});
+
+const decodeAccount = (
+	account: unknown,
+	providerId: string,
+	userId: string,
+): Effect.Effect<
+	Schema.Schema.Type<typeof OAuthAccountSchema>,
+	NoGitHubTokenError
+> => {
+	const decoded = decodeOAuthAccount(account);
+	if (Either.isLeft(decoded)) {
+		return new NoGitHubTokenError({
+			reason: `No ${providerId} OAuth account found for userId ${userId}`,
+		});
+	}
+
+	if (
+		decoded.right.providerId !== providerId ||
+		decoded.right.userId !== userId
+	) {
+		return new NoGitHubTokenError({
+			reason: `No ${providerId} OAuth account found for userId ${userId}`,
+		});
+	}
+
+	return Effect.succeed(decoded.right);
+};
+
+const resolveAccountAccessToken = (
+	account: Schema.Schema.Type<typeof OAuthAccountSchema>,
+	providerId: string,
+	persistTokenUpdate: (args: {
+		accessToken: string;
+		refreshToken: string | null;
+		accessTokenExpiresAt: number | null;
+		refreshTokenExpiresAt: number | null;
+		scope: string | null;
+	}) => Effect.Effect<void>,
+): Effect.Effect<string, NoGitHubTokenError> =>
+	Effect.gen(function* () {
+		const accessToken = account.accessToken ?? null;
+		if (accessToken === null) {
+			return yield* new NoGitHubTokenError({
+				reason: `No ${providerId} OAuth access token is stored for userId ${account.userId}`,
+			});
+		}
+
+		const accessTokenExpiresAt = account.accessTokenExpiresAt ?? null;
+		if (!isTokenInRefreshWindow(accessTokenExpiresAt)) {
+			return accessToken;
+		}
+
+		const refreshToken = account.refreshToken ?? null;
+		if (refreshToken === null) {
+			if (!isTokenExpired(accessTokenExpiresAt)) {
+				return accessToken;
+			}
+
+			return yield* new NoGitHubTokenError({
+				reason: `${providerId} OAuth token is expired and no refresh token is available for userId ${account.userId}`,
+			});
+		}
+
+		const refreshed = yield* refreshGitHubOAuthToken(
+			providerId,
+			refreshToken,
+		).pipe(
+			Effect.catchTag("NoGitHubTokenError", (error) => {
+				if (!isTokenExpired(accessTokenExpiresAt)) {
+					return Effect.succeed(null);
+				}
+				return Effect.fail(error);
+			}),
+		);
+
+		if (refreshed === null) {
+			return accessToken;
+		}
+
+		const nextRefreshToken = refreshed.refreshToken ?? refreshToken;
+		yield* persistTokenUpdate({
+			accessToken: refreshed.accessToken,
+			refreshToken: nextRefreshToken,
+			accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
+			refreshTokenExpiresAt: refreshed.refreshTokenExpiresAt,
+			scope: refreshed.scope,
+		}).pipe(Effect.catchAll(() => Effect.void));
+
+		return refreshed.accessToken;
+	});
+
 const lookupTokenViaRunQuery = (
 	runQuery: RunQueryFn,
+	runMutation: RunMutationFn,
+	providerId: string,
 	userId: string,
 ): Effect.Effect<string, NoGitHubTokenError> =>
 	Effect.gen(function* () {
@@ -80,49 +346,41 @@ const lookupTokenViaRunQuery = (
 			runQuery(components.betterAuth.adapter.findOne, {
 				model: "account" as const,
 				where: [
-					{ field: "providerId", value: "github" },
+					{ field: "providerId", value: providerId },
 					{ field: "userId", value: userId },
 				],
 			}),
 		);
 
-		return yield* extractToken(account, userId);
-	});
+		const decoded = yield* decodeAccount(account, providerId, userId);
 
-/**
- * Extract and validate the token from the account lookup result.
- */
-const extractToken = (
-	account: unknown,
-	userId: string,
-): Effect.Effect<string, NoGitHubTokenError> => {
-	if (
-		!account ||
-		typeof account !== "object" ||
-		!("accessToken" in account) ||
-		!account.accessToken
-	) {
-		return new NoGitHubTokenError({
-			reason: `No GitHub OAuth token found for userId ${userId}`,
-		});
-	}
-	return Effect.succeed(String(account.accessToken));
-};
+		return yield* resolveAccountAccessToken(decoded, providerId, (update) =>
+			Effect.promise(() =>
+				runMutation(components.betterAuth.adapter.updateOne, {
+					input: {
+						model: "account",
+						where: [
+							{ field: "providerId", value: providerId },
+							{ field: "userId", value: userId },
+						],
+						update: {
+							accessToken: update.accessToken,
+							refreshToken: update.refreshToken,
+							accessTokenExpiresAt: update.accessTokenExpiresAt,
+							refreshTokenExpiresAt: update.refreshTokenExpiresAt,
+							scope: update.scope,
+							updatedAt: Date.now(),
+						},
+					},
+				}),
+			).pipe(Effect.asVoid),
+		);
+	});
 
 // ---------------------------------------------------------------------------
 // 1. Look up the signed-in user's token (vanilla Convex action)
 // ---------------------------------------------------------------------------
 
-/**
- * Get the signed-in user's GitHub OAuth access token.
- *
- * 1. `authComponent.safeGetAuthUser(ctx)` -> user doc
- * 2. Query `account` table for `providerId = "github"` + that user's ID
- * 3. Return `accessToken`
- *
- * Accepts `GenericActionCtx<GenericDataModel>` because
- * `authComponent.safeGetAuthUser` requires a full `GenericCtx`.
- */
 export const getUserGitHubToken = (
 	ctx: GenericActionCtx<GenericDataModel>,
 ): Effect.Effect<string, NoGitHubTokenError> =>
@@ -137,50 +395,32 @@ export const getUserGitHubToken = (
 			});
 		}
 
-		return yield* lookupTokenViaRunQuery(ctx.runQuery, String(user._id));
+		return yield* lookupTokenViaRunQuery(
+			ctx.runQuery,
+			ctx.runMutation,
+			"github",
+			String(user._id),
+		);
 	});
 
 // ---------------------------------------------------------------------------
-// 2. Look up the token by better-auth user ID (vanilla Convex action)
+// 2. Look up token by Better Auth user ID (vanilla Convex)
 // ---------------------------------------------------------------------------
 
-/**
- * Look up the GitHub token for a specific better-auth user ID.
- * Used by vanilla Convex actions (bootstrap steps, etc.) that don't have
- * a user session but know `connectedByUserId` from a repo record.
- *
- * Accepts a `runQuery` callback with a narrow generic signature so it
- * works with both specific-DataModel `ctx.runQuery` (from `internalAction`)
- * and generic-DataModel `ctx.runQuery`.
- */
 export const lookupGitHubTokenByUserId = (
 	runQuery: RunQueryFn,
+	runMutation: RunMutationFn,
 	userId: string,
 ): Effect.Effect<string, NoGitHubTokenError> =>
-	lookupTokenViaRunQuery(runQuery, userId);
+	lookupTokenViaRunQuery(runQuery, runMutation, "github", userId);
 
 // ---------------------------------------------------------------------------
-// 3. Look up the token by better-auth user ID (Confect action/mutation)
+// 3. Look up token by Better Auth user ID (Confect)
 // ---------------------------------------------------------------------------
 
-/**
- * Look up the GitHub token for a specific better-auth user ID.
- * Used inside Confect action/mutation handlers where `ctx.runQuery`
- * returns `Effect.Effect` instead of `Promise`.
- *
- * @example
- * ```ts
- * const token = yield* lookupGitHubTokenByUserIdConfect(ctx.runQuery, userId);
- * ```
- */
 export const lookupGitHubTokenByUserIdConfect = (
-	runQuery: (
-		query: typeof components.betterAuth.adapter.findOne,
-		args: {
-			model: "account";
-			where: Array<{ field: string; value: string }>;
-		},
-	) => Effect.Effect<unknown>,
+	runQuery: ConfectFindOneRunQuery,
+	runMutation: ConfectUpdateOneRunMutation,
 	userId: string,
 ): Effect.Effect<string, NoGitHubTokenError> =>
 	Effect.gen(function* () {
@@ -192,26 +432,36 @@ export const lookupGitHubTokenByUserIdConfect = (
 			],
 		});
 
-		return yield* extractToken(account, userId);
+		const decoded = yield* decodeAccount(account, "github", userId);
+
+		return yield* resolveAccountAccessToken(decoded, "github", (update) =>
+			runMutation(components.betterAuth.adapter.updateOne, {
+				input: {
+					model: "account",
+					where: [
+						{ field: "providerId", value: "github" },
+						{ field: "userId", value: userId },
+					],
+					update: {
+						accessToken: update.accessToken,
+						refreshToken: update.refreshToken,
+						accessTokenExpiresAt: update.accessTokenExpiresAt,
+						refreshTokenExpiresAt: update.refreshTokenExpiresAt,
+						scope: update.scope,
+						updatedAt: Date.now(),
+					},
+				},
+			}).pipe(Effect.asVoid),
+		);
 	});
 
 // ---------------------------------------------------------------------------
 // 3b. Look up token by provider ID and user ID (Confect)
 // ---------------------------------------------------------------------------
 
-/**
- * Look up an OAuth token for a specific Better Auth provider and user.
- * Used for the classic OAuth "github-notifications" provider whose token
- * can access the GitHub Notifications API (unlike GitHub App ghu_ tokens).
- */
 export const lookupTokenByProviderConfect = (
-	runQuery: (
-		query: typeof components.betterAuth.adapter.findOne,
-		args: {
-			model: "account";
-			where: Array<{ field: string; value: string }>;
-		},
-	) => Effect.Effect<unknown>,
+	runQuery: ConfectFindOneRunQuery,
+	runMutation: ConfectUpdateOneRunMutation,
 	providerId: string,
 	userId: string,
 ): Effect.Effect<string, NoGitHubTokenError> =>
@@ -224,22 +474,33 @@ export const lookupTokenByProviderConfect = (
 			],
 		});
 
-		return yield* extractToken(account, userId);
+		const decoded = yield* decodeAccount(account, providerId, userId);
+
+		return yield* resolveAccountAccessToken(decoded, providerId, (update) =>
+			runMutation(components.betterAuth.adapter.updateOne, {
+				input: {
+					model: "account",
+					where: [
+						{ field: "providerId", value: providerId },
+						{ field: "userId", value: userId },
+					],
+					update: {
+						accessToken: update.accessToken,
+						refreshToken: update.refreshToken,
+						accessTokenExpiresAt: update.accessTokenExpiresAt,
+						refreshTokenExpiresAt: update.refreshTokenExpiresAt,
+						scope: update.scope,
+						updatedAt: Date.now(),
+					},
+				},
+			}).pipe(Effect.asVoid),
+		);
 	});
 
 // ---------------------------------------------------------------------------
 // 4. Resolve token for a repo — installation token for sync flows
 // ---------------------------------------------------------------------------
 
-/**
- * Resolve the GitHub API token for background repository sync operations.
- *
- * Background sync paths must use GitHub App installation tokens only.
- * `connectedByUserId` is accepted for compatibility but ignored.
- *
- * Returns the token string directly — callers use it with
- * `GitHubApiClient.fromToken(token)`.
- */
 export const resolveRepoToken = (
 	runQuery: RunQueryFn,
 	connectedByUserId: string | null | undefined,
@@ -252,12 +513,10 @@ export const resolveRepoToken = (
 		void runQuery;
 		void connectedByUserId;
 
-		// Background sync always uses installation token
 		if (installationId > 0) {
 			return yield* getInstallationToken(installationId);
 		}
 
-		// No installation token source available
 		return yield* new NoGitHubTokenError({
 			reason: `No installation token available: installationId=${installationId}`,
 		});

@@ -1045,7 +1045,8 @@ executeWriteOperationDef.implement((args) =>
 		);
 
 		const token = yield* lookupGitHubTokenByUserIdConfect(
-			ctx.runQuery,
+			(query, params) => ctx.runQuery(query, params),
+			(mutation, params) => ctx.runMutation(mutation, params),
 			args.actingUserId,
 		);
 		const gh = yield* Effect.provide(
