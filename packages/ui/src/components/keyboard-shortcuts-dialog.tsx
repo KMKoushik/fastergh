@@ -14,10 +14,26 @@ const PR_LIST_SHORTCUTS = [
 	{ keys: ["j"], description: "Open next pull request" },
 	{ keys: ["k"], description: "Open previous pull request" },
 	{ keys: ["o"], description: "Open current pull request" },
+	{ keys: ["/"], description: "Focus list filter" },
+] as const;
+
+const ISSUE_LIST_SHORTCUTS = [
+	{ keys: ["j"], description: "Open next issue" },
+	{ keys: ["k"], description: "Open previous issue" },
+	{ keys: ["o"], description: "Open current issue" },
+	{ keys: ["/"], description: "Focus list filter" },
 ] as const;
 
 const GLOBAL_SHORTCUTS = [
+	{ keys: ["cmd", "k"], description: "Open command palette" },
 	{ keys: ["?"], description: "Show keyboard shortcuts" },
+] as const;
+
+const DETAIL_SHORTCUTS = [
+	{ keys: ["shift", "d"], description: "Toggle split/unified diff" },
+	{ keys: ["shift", "f"], description: "Focus file filter in PR diff" },
+	{ keys: ["["], description: "Focus previous file in diff" },
+	{ keys: ["]"], description: "Focus next file in diff" },
 ] as const;
 
 function Kbd({ children }: { children: string }) {
@@ -95,6 +111,14 @@ export function KeyboardShortcutsDialog() {
 					<ShortcutSection
 						title="Pull Request List"
 						shortcuts={PR_LIST_SHORTCUTS}
+					/>
+					<ShortcutSection
+						title="Issue List"
+						shortcuts={ISSUE_LIST_SHORTCUTS}
+					/>
+					<ShortcutSection
+						title="Pull Request Detail"
+						shortcuts={DETAIL_SHORTCUTS}
 					/>
 					<ShortcutSection title="Global" shortcuts={GLOBAL_SHORTCUTS} />
 				</div>

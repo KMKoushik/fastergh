@@ -134,32 +134,34 @@ export function Link(
 	const isExternal = isExternalUrl(rest.href);
 
 	if (isExternal) {
-		const { prefetch, replace, scroll, shallow, passHref, ...anchorProps } =
-			rest;
 		if (icon) {
 			return (
-				<Link
-					{...anchorProps}
+				<NextLink
+					{...rest}
 					href={rest.href}
+					prefetch={false}
+					scroll={true}
 					target="_blank"
 					rel="noopener noreferrer"
 					className={cn("flex flex-row items-center gap-2", className)}
 				>
 					{props.icon}
 					{props.children}
-				</Link>
+				</NextLink>
 			);
 		}
 		return (
-			<Link
-				{...anchorProps}
+			<NextLink
+				{...rest}
 				href={rest.href}
+				prefetch={false}
+				scroll={true}
 				target="_blank"
 				rel="noopener noreferrer"
 				className={className}
 			>
 				{props.children}
-			</Link>
+			</NextLink>
 		);
 	}
 
