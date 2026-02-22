@@ -9,10 +9,16 @@ export default function ActivityPage({
 }: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
+	const navContextPromise = params.then(({ owner, name }) => ({
+		owner,
+		name,
+	}));
+
 	return (
 		<MainSiteShell
 			sidebar={<RepoOverviewSidebar params={params} />}
 			detail={<RepoOverviewDetail params={params} />}
+			navContextPromise={navContextPromise}
 		/>
 	);
 }

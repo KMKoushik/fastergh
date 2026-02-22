@@ -9,10 +9,17 @@ export default function ActionsPage({
 }: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
+	const navContextPromise = params.then(({ owner, name }) => ({
+		owner,
+		name,
+		activeTab: "actions",
+	}));
+
 	return (
 		<MainSiteShell
 			sidebar={<ActionsSidebar params={params} />}
 			detail={<ActionsDetail params={params} />}
+			navContextPromise={navContextPromise}
 		/>
 	);
 }

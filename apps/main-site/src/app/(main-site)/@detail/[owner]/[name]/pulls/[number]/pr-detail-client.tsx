@@ -29,11 +29,6 @@ import {
 } from "@packages/ui/components/icons";
 import { Input } from "@packages/ui/components/input";
 import { Kbd } from "@packages/ui/components/kbd";
-import {
-	DiffMountQueueProvider,
-	DiffPlaceholder,
-	useLazyDiffMount,
-} from "@packages/ui/components/lazy-patch-diff";
 import { Link } from "@packages/ui/components/link";
 import { Separator } from "@packages/ui/components/separator";
 import { Skeleton } from "@packages/ui/components/skeleton";
@@ -888,7 +883,7 @@ type DiffEntry = {
 };
 
 // ---------------------------------------------------------------------------
-// FileDiffBlock — memoized per-file diff block with lazy mounting
+// FileDiffBlock — memoized per-file diff block
 // ---------------------------------------------------------------------------
 
 const FileDiffBlock = memo(function FileDiffBlock({
@@ -960,8 +955,6 @@ const FileDiffBlock = memo(function FileDiffBlock({
 	onSubmitInlineComment: () => void;
 	onAddDraftReply: (reply: Omit<DraftReviewReply, "id" | "createdAt">) => void;
 }) {
-	const { sentinelRef, shouldMount } = useLazyDiffMount("600px");
-
 	const reviewThreads = buildReviewThreads(entry.reviewComments);
 
 	const inlineAnnotations: Array<DiffLineAnnotation<InlineDiffAnnotation>> =
@@ -1129,12 +1122,7 @@ const FileDiffBlock = memo(function FileDiffBlock({
 				<>
 					{entry.patch !== null ? (
 						<div className="overflow-x-auto border-t">
-							{!shouldMount ? (
-								<DiffPlaceholder
-									sentinelRef={sentinelRef}
-									lineCount={entry.additions + entry.deletions}
-								/>
-							) : fullContextFiles !== null ? (
+							{fullContextFiles !== null ? (
 								<MouseDownExpandContainer
 									disabledExpandTooltip={fullContextError ?? undefined}
 								>
@@ -2009,41 +1997,39 @@ const DiffPanel = forwardRef<
 
 					{/* Diff blocks */}
 					{filteredEntries.length > 0 && (
-						<DiffMountQueueProvider>
-							<div className="space-y-3">
-								{filteredEntries.map((entry) => (
-									<FileDiffBlock
-										key={entry.filename}
-										entry={entry}
-										anchorId={fileAnchorId(entry.filename)}
-										isFocused={focusedFilename === entry.filename}
-										isCollapsed={collapsedFiles[entry.filename] === true}
-										hasCollapsedContext={
-											entriesWithCollapsedContext[entry.filename] === true
-										}
-										fullContextState={fullContextByFilename[entry.filename]}
-										viewMode={viewMode}
-										inlineComposerTarget={inlineComposerTarget}
-										inlineComposerBody={inlineComposerBody}
-										isPostingInlineComment={isPostingInlineComment}
-										inlineCommentResult={inlineCommentResult}
-										owner={owner}
-										name={name}
-										repositoryId={pr.repositoryId}
-										prNumber={pr.number}
-										onToggleCollapse={handleToggleCollapse}
-										onLoadFullContext={loadFullContextForFile}
-										onLineSelectionEnd={handleLineSelectionEnd}
-										onLineNumberClick={handleLineNumberClick}
-										onSetInlineComposerTarget={setInlineComposerTarget}
-										onSetInlineComposerBody={setInlineComposerBody}
-										onSetSelectionNotice={setSelectionNotice}
-										onSubmitInlineComment={submitInlineComment}
-										onAddDraftReply={onAddDraftReply}
-									/>
-								))}
-							</div>
-						</DiffMountQueueProvider>
+						<div className="space-y-3">
+							{filteredEntries.map((entry) => (
+								<FileDiffBlock
+									key={entry.filename}
+									entry={entry}
+									anchorId={fileAnchorId(entry.filename)}
+									isFocused={focusedFilename === entry.filename}
+									isCollapsed={collapsedFiles[entry.filename] === true}
+									hasCollapsedContext={
+										entriesWithCollapsedContext[entry.filename] === true
+									}
+									fullContextState={fullContextByFilename[entry.filename]}
+									viewMode={viewMode}
+									inlineComposerTarget={inlineComposerTarget}
+									inlineComposerBody={inlineComposerBody}
+									isPostingInlineComment={isPostingInlineComment}
+									inlineCommentResult={inlineCommentResult}
+									owner={owner}
+									name={name}
+									repositoryId={pr.repositoryId}
+									prNumber={pr.number}
+									onToggleCollapse={handleToggleCollapse}
+									onLoadFullContext={loadFullContextForFile}
+									onLineSelectionEnd={handleLineSelectionEnd}
+									onLineNumberClick={handleLineNumberClick}
+									onSetInlineComposerTarget={setInlineComposerTarget}
+									onSetInlineComposerBody={setInlineComposerBody}
+									onSetSelectionNotice={setSelectionNotice}
+									onSubmitInlineComment={submitInlineComment}
+									onAddDraftReply={onAddDraftReply}
+								/>
+							))}
+						</div>
 					)}
 					{filteredEntries.length === 0 && (
 						<div className="rounded-lg border bg-muted/5 px-4 py-8 text-center">

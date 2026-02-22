@@ -13,6 +13,11 @@ export default function ActionRunDetailPage({
 		const parsed = Number.parseInt(runId, 10);
 		return Number.isNaN(parsed) ? null : parsed;
 	});
+	const navContextPromise = params.then(({ owner, name }) => ({
+		owner,
+		name,
+		activeTab: "actions",
+	}));
 	const repoParams = params.then(({ owner, name }) => ({ owner, name }));
 
 	return (
@@ -24,6 +29,7 @@ export default function ActionRunDetailPage({
 				/>
 			}
 			detail={<ActionRunDetail params={params} />}
+			navContextPromise={navContextPromise}
 		/>
 	);
 }

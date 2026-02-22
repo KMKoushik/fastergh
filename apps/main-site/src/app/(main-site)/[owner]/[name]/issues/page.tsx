@@ -9,10 +9,17 @@ export default function IssuesPage({
 }: {
 	params: Promise<{ owner: string; name: string }>;
 }) {
+	const navContextPromise = params.then(({ owner, name }) => ({
+		owner,
+		name,
+		activeTab: "issues",
+	}));
+
 	return (
 		<MainSiteShell
 			sidebar={<IssuesSidebar params={params} />}
 			detail={<IssuesDetail params={params} />}
+			navContextPromise={navContextPromise}
 		/>
 	);
 }

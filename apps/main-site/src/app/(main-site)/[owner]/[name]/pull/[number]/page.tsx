@@ -13,6 +13,11 @@ export default function PrDetailPage({
 		const parsed = Number.parseInt(number, 10);
 		return Number.isNaN(parsed) ? null : parsed;
 	});
+	const navContextPromise = params.then(({ owner, name }) => ({
+		owner,
+		name,
+		activeTab: "pulls",
+	}));
 	const repoParams = params.then(({ owner, name }) => ({ owner, name }));
 
 	return (
@@ -24,6 +29,7 @@ export default function PrDetailPage({
 				/>
 			}
 			detail={<PullDetail params={params} />}
+			navContextPromise={navContextPromise}
 		/>
 	);
 }

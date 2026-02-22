@@ -6,10 +6,16 @@ export default function OrgPage({
 }: {
 	params: Promise<{ owner: string }>;
 }) {
+	const navContextPromise = params.then(({ owner }) => ({
+		owner,
+		name: null,
+	}));
+
 	return (
 		<MainSiteShell
 			sidebar={<OrgSidebar />}
 			detail={<OrgDetail params={params} />}
+			navContextPromise={navContextPromise}
 		/>
 	);
 }

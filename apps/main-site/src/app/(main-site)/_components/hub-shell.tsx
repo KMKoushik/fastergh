@@ -101,14 +101,14 @@ export function HubShell({
 							collapsedSize={0}
 							className="border-r border-border/60"
 						>
-							<Suspense fallback={<SidebarSlotFallback />}>{sidebar}</Suspense>
+							{sidebar}
 						</ResizablePanel>
 
 						<ResizableHandle />
 
 						{/* Panel 2: Detail/Content */}
 						<ResizablePanel defaultSize={82} minSize={60} className="min-w-0">
-							<Suspense fallback={<DetailSlotFallback />}>{detail}</Suspense>
+							{detail}
 						</ResizablePanel>
 					</ResizablePanelGroup>
 				</div>
@@ -129,9 +129,7 @@ export function HubShell({
 								Sidebar
 							</Button>
 						</div>
-						<div className="min-h-0 flex-1">
-							<Suspense fallback={<DetailSlotFallback />}>{detail}</Suspense>
-						</div>
+						<div className="min-h-0 flex-1">{detail}</div>
 					</div>
 
 					<Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
@@ -145,11 +143,7 @@ export function HubShell({
 									Displays the QuickHub sidebar.
 								</SheetDescription>
 							</SheetHeader>
-							<div className="h-full">
-								<Suspense fallback={<SidebarSlotFallback />}>
-									{sidebar}
-								</Suspense>
-							</div>
+							<div className="h-full">{sidebar}</div>
 						</SheetContent>
 					</Sheet>
 				</div>
@@ -161,12 +155,4 @@ export function HubShell({
 			</div>
 		</HubSidebarContext.Provider>
 	);
-}
-
-function SidebarSlotFallback() {
-	return <div className="h-full animate-pulse bg-sidebar/60" />;
-}
-
-function DetailSlotFallback() {
-	return <div className="h-full animate-pulse bg-background" />;
 }
