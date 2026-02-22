@@ -17,12 +17,13 @@
 		"test:watch": "vitest"
 	},
 	"dependencies": {
-		"@effect/platform": "catalog:",
-		"@effect/rpc": "catalog:",
 		"@effect-atom/atom": "catalog:",
 		"@effect-atom/atom-react": "catalog:",
+		"@effect/platform": "catalog:",
+		"@effect/rpc": "catalog:",
 		"convex": "catalog:",
-		"effect": "catalog:"
+		"effect": "catalog:",
+		"next": "^16.1.6"
 	},
 	"devDependencies": {
 		"@effect/vitest": "catalog:",

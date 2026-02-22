@@ -253,6 +253,19 @@ const decodeExit = (encoded: ExitEncoded): Exit.Exit<unknown, unknown> => {
 	return Exit.fail(new RpcDefectError({ defect: "Empty cause" }));
 };
 
+const ensureNextRequestDataAccess = async () => {
+	if (typeof window !== "undefined") {
+		return;
+	}
+
+	try {
+		const { headers } = await import("next/headers");
+		await headers();
+	} catch {
+		return;
+	}
+};
+
 const withRpcClientSpan = <A>(
 	kind: RpcClientKind,
 	endpointTag: string,
@@ -938,9 +951,20 @@ export function createServerRpcQuery<
 		},
 	});
 
-	// The cache needs `ConvexClient` from the layer (via createQueryEffect).
-	// We provide the layer, then run the resulting Effect synchronously.
-	const queryCache = Effect.runSync(Effect.provide(cacheEffect, defaultLayer));
+	const makeQueryCache = () =>
+		Effect.runSync(Effect.provide(cacheEffect, defaultLayer));
+
+	let queryCache = Option.none<ReturnType<typeof makeQueryCache>>();
+
+	const getOrCreateQueryCache = () => {
+		if (Option.isSome(queryCache)) {
+			return queryCache.value;
+		}
+
+		const nextQueryCache = makeQueryCache();
+		queryCache = Option.some(nextQueryCache);
+		return nextQueryCache;
+	};
 
 	const endpointCache = new Map<string, ServerQueryEndpoint<unknown, unknown>>();
 
@@ -954,7 +978,9 @@ export function createServerRpcQuery<
 			convexFnRegistry.set(prop, convexFn as FunctionReference<"query">);
 
 			endpoint = {
-				queryPromise: (payload: unknown) => {
+				queryPromise: async (payload: unknown) => {
+					await ensureNextRequestDataAccess();
+
 					const payloadObject =
 						payload !== null && typeof payload === "object" ? payload : {};
 					const fullPayload = { ...getShared(), ...payloadObject };
@@ -968,6 +994,7 @@ export function createServerRpcQuery<
 								payload: fullPayload,
 							});
 							const requestLayer = getLayerForScope(authScope, authToken);
+							const queryCache = yield* Effect.sync(getOrCreateQueryCache);
 							return yield* Effect.provide(queryCache.get(cacheKey), requestLayer);
 						}),
 					);

@@ -78,6 +78,7 @@
         "@effect/rpc": "catalog:",
         "convex": "catalog:",
         "effect": "catalog:",
+        "next": "^16.1.6",
       },
       "devDependencies": {
         "@effect/vitest": "catalog:",

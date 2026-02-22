@@ -1,20 +1,31 @@
 "use client";
 
+import { Button } from "@packages/ui/components/button";
+import { PanelLeftIcon } from "@packages/ui/components/icons";
 import { KeyboardShortcutsDialog } from "@packages/ui/components/keyboard-shortcuts-dialog";
 import {
 	ResizableHandle,
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@packages/ui/components/resizable";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+} from "@packages/ui/components/sheet";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import {
 	type ComponentRef,
 	createContext,
 	type ReactNode,
+	Suspense,
 	useCallback,
 	useContext,
 	useMemo,
 	useRef,
+	useState,
 } from "react";
 import { SearchCommand } from "./search-command";
 
@@ -44,8 +55,17 @@ export function HubShell({
 	detail: ReactNode;
 }) {
 	const sidebarPanelRef = useRef<SidebarPanelRef>(null);
+	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
 	const toggleSidebar = useCallback(() => {
+		if (
+			typeof window !== "undefined" &&
+			window.matchMedia("(max-width: 767px)").matches
+		) {
+			setMobileSidebarOpen((isOpen) => !isOpen);
+			return;
+		}
+
 		const panel = sidebarPanelRef.current;
 		if (panel === null) return;
 		if (panel.isCollapsed()) {
@@ -81,29 +101,72 @@ export function HubShell({
 							collapsedSize={0}
 							className="border-r border-border/60"
 						>
-							{sidebar}
+							<Suspense fallback={<SidebarSlotFallback />}>{sidebar}</Suspense>
 						</ResizablePanel>
 
 						<ResizableHandle />
 
 						{/* Panel 2: Detail/Content */}
 						<ResizablePanel defaultSize={82} minSize={60} className="min-w-0">
-							{detail}
+							<Suspense fallback={<DetailSlotFallback />}>{detail}</Suspense>
 						</ResizablePanel>
 					</ResizablePanelGroup>
 				</div>
 
-				{/* Mobile: same shell, stacked panels */}
+				{/* Mobile: detail content + toggleable sidebar sheet */}
 				<div className="md:hidden h-full">
-					<div className="grid h-full grid-rows-[minmax(16rem,40dvh)_minmax(0,1fr)]">
-						<div className="min-h-0 border-b border-border/60">{sidebar}</div>
-						<div className="min-h-0">{detail}</div>
+					<div className="flex h-full min-h-0 flex-col">
+						<div className="shrink-0 border-b border-border/60 px-2 py-2">
+							<Button
+								variant="outline"
+								size="sm"
+								className="h-8 gap-1.5"
+								onClick={() => {
+									setMobileSidebarOpen(true);
+								}}
+							>
+								<PanelLeftIcon className="size-3.5" />
+								Sidebar
+							</Button>
+						</div>
+						<div className="min-h-0 flex-1">
+							<Suspense fallback={<DetailSlotFallback />}>{detail}</Suspense>
+						</div>
 					</div>
+
+					<Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+						<SheetContent
+							side="left"
+							className="w-[min(22rem,90vw)] p-0 [&>button]:hidden"
+						>
+							<SheetHeader className="sr-only">
+								<SheetTitle>Sidebar</SheetTitle>
+								<SheetDescription>
+									Displays the QuickHub sidebar.
+								</SheetDescription>
+							</SheetHeader>
+							<div className="h-full">
+								<Suspense fallback={<SidebarSlotFallback />}>
+									{sidebar}
+								</Suspense>
+							</div>
+						</SheetContent>
+					</Sheet>
 				</div>
 
-				<SearchCommand />
+				<Suspense fallback={null}>
+					<SearchCommand />
+				</Suspense>
 				<KeyboardShortcutsDialog />
 			</div>
 		</HubSidebarContext.Provider>
 	);
+}
+
+function SidebarSlotFallback() {
+	return <div className="h-full animate-pulse bg-sidebar/60" />;
+}
+
+function DetailSlotFallback() {
+	return <div className="h-full animate-pulse bg-background" />;
 }
