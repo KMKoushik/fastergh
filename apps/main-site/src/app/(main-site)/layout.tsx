@@ -20,7 +20,12 @@ export default function MainSiteLayout({
 	return (
 		<Providers>
 			<HubShell sidebar={sidebar} detail={detail} />
-			{/* children slot for route pages that handle redirects etc */}
+			{/*
+			 * Hidden children slot — only used for route resolution stubs
+			 * (pages that return null or redirect). The Suspense is required
+			 * for prerender safety (github/setup awaits searchParams) but
+			 * has zero visual impact since the container is hidden.
+			 */}
 			<div className="hidden">
 				<Suspense>{children}</Suspense>
 			</div>

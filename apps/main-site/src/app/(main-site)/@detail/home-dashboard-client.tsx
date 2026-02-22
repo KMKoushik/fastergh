@@ -8,7 +8,7 @@ import {
 	CommandEmpty,
 	CommandGroup,
 	CommandInput,
-	CommandItem,
+	CommandLinkItem,
 	CommandList,
 } from "@packages/ui/components/command";
 import {
@@ -24,7 +24,6 @@ import { GitHubIcon } from "@packages/ui/icons/index";
 import { authClient } from "@packages/ui/lib/auth-client";
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
-import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { triggerOpenSearchCommand } from "../_components/search-command-events";
@@ -281,7 +280,6 @@ function DashboardCommandPalette({
 	scopeOwnerLogin: string | null;
 }) {
 	const [query, setQuery] = useState("");
-	const router = useRouter();
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	// Auto-focus on mount
@@ -338,13 +336,9 @@ function DashboardCommandPalette({
 		filteredPrs.length > 0 ||
 		filteredIssues.length > 0;
 
-	const handleSelect = useCallback(
-		(path: string) => {
-			setQuery("");
-			router.push(path);
-		},
-		[router],
-	);
+	const clearQuery = useCallback(() => {
+		setQuery("");
+	}, []);
 
 	const scopeLabel =
 		scopeOwnerLogin === null ? "all" : `org:${scopeOwnerLogin}`;
@@ -393,12 +387,11 @@ function DashboardCommandPalette({
 						{filteredRepos.length > 0 && (
 							<CommandGroup heading="Repositories">
 								{filteredRepos.map((repo) => (
-									<CommandItem
+									<CommandLinkItem
 										key={repo.fullName}
 										value={repo.fullName}
-										onSelect={() =>
-											handleSelect(`/${repo.ownerLogin}/${repo.name}`)
-										}
+										href={`/${repo.ownerLogin}/${repo.name}`}
+										onBeforeNavigate={clearQuery}
 									>
 										<GitBranch className="size-3.5 text-muted-foreground" />
 										<span className="flex-1 truncate text-sm">
@@ -408,21 +401,18 @@ function DashboardCommandPalette({
 											{repo.openPrCount} PRs &middot; {repo.openIssueCount}{" "}
 											issues
 										</span>
-									</CommandItem>
+									</CommandLinkItem>
 								))}
 							</CommandGroup>
 						)}
 						{filteredPrs.length > 0 && (
 							<CommandGroup heading="Pull Requests">
 								{filteredPrs.map((pr) => (
-									<CommandItem
+									<CommandLinkItem
 										key={`${pr.ownerLogin}/${pr.repoName}#${pr.number}`}
 										value={`pr-${pr.ownerLogin}/${pr.repoName}#${pr.number}`}
-										onSelect={() =>
-											handleSelect(
-												`/${pr.ownerLogin}/${pr.repoName}/pull/${pr.number}`,
-											)
-										}
+										href={`/${pr.ownerLogin}/${pr.repoName}/pull/${pr.number}`}
+										onBeforeNavigate={clearQuery}
 									>
 										<GitPullRequest className="size-3.5 text-status-open" />
 										<div className="min-w-0 flex-1">
@@ -431,21 +421,18 @@ function DashboardCommandPalette({
 												{pr.ownerLogin}/{pr.repoName} #{pr.number}
 											</span>
 										</div>
-									</CommandItem>
+									</CommandLinkItem>
 								))}
 							</CommandGroup>
 						)}
 						{filteredIssues.length > 0 && (
 							<CommandGroup heading="Issues">
 								{filteredIssues.map((issue) => (
-									<CommandItem
+									<CommandLinkItem
 										key={`${issue.ownerLogin}/${issue.repoName}#${issue.number}`}
 										value={`issue-${issue.ownerLogin}/${issue.repoName}#${issue.number}`}
-										onSelect={() =>
-											handleSelect(
-												`/${issue.ownerLogin}/${issue.repoName}/issues/${issue.number}`,
-											)
-										}
+										href={`/${issue.ownerLogin}/${issue.repoName}/issues/${issue.number}`}
+										onBeforeNavigate={clearQuery}
 									>
 										<CircleDot className="size-3.5 text-status-open" />
 										<div className="min-w-0 flex-1">
@@ -454,7 +441,7 @@ function DashboardCommandPalette({
 												{issue.ownerLogin}/{issue.repoName} #{issue.number}
 											</span>
 										</div>
-									</CommandItem>
+									</CommandLinkItem>
 								))}
 							</CommandGroup>
 						)}

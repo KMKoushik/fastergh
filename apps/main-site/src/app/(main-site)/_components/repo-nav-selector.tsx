@@ -12,7 +12,7 @@ import {
 	CommandEmpty,
 	CommandGroup,
 	CommandInput,
-	CommandItem,
+	CommandLinkItem,
 	CommandList,
 } from "@packages/ui/components/command";
 import {
@@ -28,8 +28,7 @@ import {
 import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Array as Arr, pipe, Record as Rec } from "effect";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { SidebarRepo } from "../@sidebar/sidebar-client";
 
 const EmptyPayload: Record<string, never> = {};
@@ -52,7 +51,6 @@ export function RepoNavSelector({
 	activeTab?: string;
 	initialRepos: ReadonlyArray<SidebarRepo>;
 }) {
-	const router = useRouter();
 	const client = useProjectionQueries();
 	const reposAtom = useMemo(
 		() => client.listRepos.subscription(EmptyPayload),
@@ -78,24 +76,9 @@ export function RepoNavSelector({
 
 	const [open, setOpen] = useState(false);
 
-	const handleOrgSelect = (org: string) => {
-		router.push(`/${org}`);
+	const closePopover = useCallback(() => {
 		setOpen(false);
-	};
-
-	const handleRepoSelect = (repo: SidebarRepo) => {
-		if (activeTab) {
-			router.push(`/${repo.ownerLogin}/${repo.name}/${activeTab}`);
-		} else {
-			router.push(`/${repo.ownerLogin}/${repo.name}`);
-		}
-		setOpen(false);
-	};
-
-	const handleAllSelect = () => {
-		router.push("/");
-		setOpen(false);
-	};
+	}, []);
 
 	// Trigger label: [OrgIcon] [RepoName] or [OrgIcon] [OrgName] or "All Repos"
 	const triggerLabel = name ?? owner ?? "All Repos";
@@ -139,10 +122,11 @@ export function RepoNavSelector({
 
 							{/* Home / All */}
 							<CommandGroup>
-								<CommandItem
+								<CommandLinkItem
 									value="__all__"
 									className="gap-2 text-xs py-1.5"
-									onSelect={handleAllSelect}
+									href="/"
+									onBeforeNavigate={closePopover}
 								>
 									<span className="truncate">All Repos</span>
 									<Check
@@ -153,7 +137,7 @@ export function RepoNavSelector({
 												: "opacity-0",
 										)}
 									/>
-								</CommandItem>
+								</CommandLinkItem>
 							</CommandGroup>
 
 							{/* Grouped by org */}
@@ -163,10 +147,11 @@ export function RepoNavSelector({
 								return (
 									<CommandGroup key={org} heading={org}>
 										{/* Org-level item */}
-										<CommandItem
+										<CommandLinkItem
 											value={`org:${org}`}
 											className="gap-2 text-xs py-1.5"
-											onSelect={() => handleOrgSelect(org)}
+											href={`/${org}`}
+											onBeforeNavigate={closePopover}
 										>
 											<Avatar className="size-4 shrink-0">
 												{avatarUrl && <AvatarImage src={avatarUrl} alt={org} />}
@@ -185,15 +170,20 @@ export function RepoNavSelector({
 														: "opacity-0",
 												)}
 											/>
-										</CommandItem>
+										</CommandLinkItem>
 
 										{/* Repos in this org */}
 										{orgRepos.map((repo) => (
-											<CommandItem
+											<CommandLinkItem
 												key={repo.repositoryId}
 												value={`${repo.ownerLogin}/${repo.name}`}
 												className="gap-2 text-xs py-1.5"
-												onSelect={() => handleRepoSelect(repo)}
+												href={
+													activeTab
+														? `/${repo.ownerLogin}/${repo.name}/${activeTab}`
+														: `/${repo.ownerLogin}/${repo.name}`
+												}
+												onBeforeNavigate={closePopover}
 											>
 												<Avatar className="size-4 shrink-0">
 													{repo.ownerAvatarUrl && (
@@ -228,7 +218,7 @@ export function RepoNavSelector({
 															: "opacity-0",
 													)}
 												/>
-											</CommandItem>
+											</CommandLinkItem>
 										))}
 									</CommandGroup>
 								);

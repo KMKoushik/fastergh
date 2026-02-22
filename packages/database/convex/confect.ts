@@ -1,12 +1,12 @@
 import {
+	ConfectActionCtx as ConfectActionCtxTag,
+	type ConfectActionCtx as ConfectActionCtxType,
 	ConfectMutationCtx as ConfectMutationCtxTag,
 	type ConfectMutationCtx as ConfectMutationCtxType,
 	ConfectQueryCtx as ConfectQueryCtxTag,
 	type ConfectQueryCtx as ConfectQueryCtxType,
-	ConfectActionCtx as ConfectActionCtxTag,
-	type ConfectActionCtx as ConfectActionCtxType,
 } from "@packages/confect/ctx";
-import { type TablesFromSchemaDefinition } from "@packages/confect/schema";
+import type { TablesFromSchemaDefinition } from "@packages/confect/schema";
 import { confectSchema } from "./schema";
 
 export { confectSchema };

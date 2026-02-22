@@ -20,7 +20,6 @@ import { authClient } from "@packages/ui/lib/auth-client";
 import { cn } from "@packages/ui/lib/utils";
 import { useNotifications } from "@packages/ui/rpc/notifications";
 import { Option as Opt } from "effect";
-import { useRouter } from "next/navigation";
 import { type ReactNode, useMemo } from "react";
 import { extractErrorMessage, extractErrorReason } from "@/lib/rpc-error";
 
@@ -160,7 +159,6 @@ export function NotificationsClient({
 	const [syncResult, syncNotifications] = useAtom(
 		client.syncNotifications.call,
 	);
-	const router = useRouter();
 	const autoSyncAtom = useMemo(
 		() => client.syncNotifications.callAsQuery(EmptyPayload),
 		[client],
@@ -343,12 +341,11 @@ export function NotificationsClient({
 										<NotificationRow
 											key={n.githubNotificationId}
 											notification={n}
-											onNavigate={(href) => {
+											onBeforeNavigate={() =>
 												markRead({
 													githubNotificationId: n.githubNotificationId,
-												});
-												router.push(href);
-											}}
+												})
+											}
 											onMarkRead={() =>
 												markRead({
 													githubNotificationId: n.githubNotificationId,
@@ -376,7 +373,6 @@ export function NotificationsClient({
 										<NotificationRow
 											key={n.githubNotificationId}
 											notification={n}
-											onNavigate={(href) => router.push(href)}
 										/>
 									))}
 								</div>
@@ -474,11 +470,11 @@ function InsightCard({
 
 function NotificationRow({
 	notification,
-	onNavigate,
+	onBeforeNavigate,
 	onMarkRead,
 }: {
 	notification: NotificationItem;
-	onNavigate: (href: string) => void;
+	onBeforeNavigate?: () => void;
 	onMarkRead?: () => void;
 }) {
 	const href = getNotificationHref(notification);
@@ -533,7 +529,7 @@ function NotificationRow({
 			<Link
 				href={href}
 				className="block no-underline"
-				onClick={() => onNavigate(href)}
+				onClick={() => onBeforeNavigate?.()}
 			>
 				{content}
 			</Link>

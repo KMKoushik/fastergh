@@ -8,6 +8,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandLinkItem,
 	CommandList,
 	CommandSeparator,
 	CommandShortcut,
@@ -28,7 +29,7 @@ import { cn } from "@packages/ui/lib/utils";
 import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { Option } from "effect";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	buildCanonicalGitHubSearch,
@@ -334,10 +335,11 @@ function RepoQuickActions({
 	return (
 		<CommandGroup heading="Quick Actions">
 			{actions.map((action) => (
-				<CommandItem
+				<CommandLinkItem
 					key={action.path}
 					value={`${action.title} ${action.subtitle ?? ""}`}
-					onSelect={() => onSelect(action)}
+					href={action.path}
+					onBeforeNavigate={() => onSelect(action)}
 				>
 					<IconForKind kind={action.kind} />
 					<span>{action.title}</span>
@@ -346,7 +348,7 @@ function RepoQuickActions({
 							{action.subtitle}
 						</span>
 					)}
-				</CommandItem>
+				</CommandLinkItem>
 			))}
 			<CommandItem value="go to github github.com" onSelect={onGoToGitHub}>
 				<GitHubIcon className="size-4 text-muted-foreground" />
@@ -408,15 +410,16 @@ function QuickNumberNavigation({
 	return (
 		<CommandGroup heading="Jump">
 			{paths.map((target) => (
-				<CommandItem
+				<CommandLinkItem
 					key={target.path}
 					value={`${target.title} ${target.subtitle ?? ""}`}
-					onSelect={() => onSelect(target)}
+					href={target.path}
+					onBeforeNavigate={() => onSelect(target)}
 				>
 					<IconForKind kind={target.kind} />
 					<span>{target.title}</span>
 					<CommandShortcut>Enter</CommandShortcut>
-				</CommandItem>
+				</CommandLinkItem>
 			))}
 		</CommandGroup>
 	);
@@ -448,9 +451,10 @@ function SearchResultRow({
 	};
 
 	return (
-		<CommandItem
+		<CommandLinkItem
 			value={`${item.type} ${item.number} ${item.title} ${item.authorLogin ?? ""}`}
-			onSelect={() => onSelect(target)}
+			href={target.path}
+			onBeforeNavigate={() => onSelect(target)}
 			data-result-id={resultId}
 			onPointerMove={(event) =>
 				onPointerIntent(resultId, { x: event.clientX, y: event.clientY })
@@ -477,7 +481,7 @@ function SearchResultRow({
 			>
 				{item.state}
 			</span>
-		</CommandItem>
+		</CommandLinkItem>
 	);
 }
 
@@ -752,10 +756,11 @@ function GlobalWorkResults({
 				};
 
 				return (
-					<CommandItem
+					<CommandLinkItem
 						key={`${item.ownerLogin}/${item.repoName}#${item.number}`}
 						value={`${item.title} ${item.ownerLogin}/${item.repoName} ${item.number}`}
-						onSelect={() => onSelect(target)}
+						href={target.path}
+						onBeforeNavigate={() => onSelect(target)}
 					>
 						<GitPullRequest className="size-4 text-status-open" />
 						<div className="min-w-0 flex-1">
@@ -773,7 +778,7 @@ function GlobalWorkResults({
 								failing
 							</Badge>
 						)}
-					</CommandItem>
+					</CommandLinkItem>
 				);
 			})}
 		</CommandGroup>
@@ -835,10 +840,11 @@ function RepoResults({
 				};
 
 				return (
-					<CommandItem
+					<CommandLinkItem
 						key={repo.repositoryId}
 						value={`${repo.fullName} ${repo.ownerLogin} ${repo.name}`}
-						onSelect={() => onSelect(target)}
+						href={target.path}
+						onBeforeNavigate={() => onSelect(target)}
 					>
 						<IconForKind kind="repo" />
 						<div className="min-w-0 flex-1">
@@ -854,7 +860,7 @@ function RepoResults({
 						<span className="text-xs text-muted-foreground">
 							{formatRelative(repo.updatedAt)}
 						</span>
-					</CommandItem>
+					</CommandLinkItem>
 				);
 			})}
 		</CommandGroup>
@@ -873,10 +879,11 @@ function RecentNavigation({
 	return (
 		<CommandGroup heading="Recent">
 			{entries.map((entry) => (
-				<CommandItem
+				<CommandLinkItem
 					key={entry.path}
 					value={`${entry.title} ${entry.subtitle ?? ""}`}
-					onSelect={() =>
+					href={entry.path}
+					onBeforeNavigate={() =>
 						onSelect({
 							path: entry.path,
 							title: entry.title,
@@ -895,7 +902,7 @@ function RecentNavigation({
 							<span>{formatRelative(entry.updatedAt)}</span>
 						</div>
 					</div>
-				</CommandItem>
+				</CommandLinkItem>
 			))}
 		</CommandGroup>
 	);
@@ -1004,9 +1011,10 @@ function GlobalQuickViews({
 	return (
 		<CommandGroup heading="Quick Views">
 			{showWorkbench && (
-				<CommandItem
+				<CommandLinkItem
 					value="view workbench"
-					onSelect={() =>
+					href="/"
+					onBeforeNavigate={() =>
 						onSelect({
 							path: "/",
 							title: "Workbench",
@@ -1017,12 +1025,13 @@ function GlobalQuickViews({
 				>
 					<Rocket className="size-4 text-muted-foreground" />
 					<span>Open Workbench</span>
-				</CommandItem>
+				</CommandLinkItem>
 			)}
 			{showNotifications && (
-				<CommandItem
+				<CommandLinkItem
 					value="view notifications"
-					onSelect={() =>
+					href="/notifications"
+					onBeforeNavigate={() =>
 						onSelect({
 							path: "/notifications",
 							title: "Notifications",
@@ -1033,7 +1042,7 @@ function GlobalQuickViews({
 				>
 					<Inbox className="size-4 text-muted-foreground" />
 					<span>Open Notifications</span>
-				</CommandItem>
+				</CommandLinkItem>
 			)}
 			{showGitHub && (
 				<CommandItem value="go to github github.com" onSelect={onGoToGitHub}>
@@ -1070,7 +1079,6 @@ export function SearchCommand() {
 	const debouncedQuery = useDebouncedValue(query, 250);
 	const repo = useRepoFromPathname();
 	const pathname = usePathname();
-	const router = useRouter();
 
 	useHotkey("Mod+K", (event) => {
 		event.preventDefault();
@@ -1098,18 +1106,14 @@ export function SearchCommand() {
 		setRecent(getRecentEntries());
 	}, [open]);
 
-	const handleSelect = useCallback(
-		(target: NavigationTarget) => {
-			setOpen(false);
-			setRecent((current) => {
-				const next = upsertRecent(current, target);
-				saveRecentEntries(next);
-				return next;
-			});
-			router.push(target.path);
-		},
-		[router],
-	);
+	const handleSelect = useCallback((target: NavigationTarget) => {
+		setOpen(false);
+		setRecent((current) => {
+			const next = upsertRecent(current, target);
+			saveRecentEntries(next);
+			return next;
+		});
+	}, []);
 
 	const goToGitHub = useCallback(() => {
 		setOpen(false);

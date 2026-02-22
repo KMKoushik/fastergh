@@ -21,7 +21,6 @@ import {
 	X,
 } from "@packages/ui/components/icons";
 import { Input } from "@packages/ui/components/input";
-import { Link } from "@packages/ui/components/link";
 import { LinkButton } from "@packages/ui/components/link-button";
 import {
 	Popover,
@@ -185,8 +184,6 @@ function TemplateChooser({
 	onSelect: (template: IssueTemplate) => void;
 	onBlank: () => void;
 }) {
-	const router = useRouter();
-
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
@@ -247,14 +244,14 @@ function TemplateChooser({
 				</div>
 
 				<div className="mt-6">
-					<Button
+					<LinkButton
+						href={`/${owner}/${name}/issues`}
 						variant="ghost"
 						size="sm"
 						className="text-xs"
-						onClick={() => router.push(`/${owner}/${name}/issues`)}
 					>
 						Cancel
-					</Button>
+					</LinkButton>
 				</div>
 			</div>
 		</div>
@@ -420,14 +417,17 @@ function NewIssueForm({
 								)}
 							</div>
 							<div className="flex items-center gap-2">
-								<Button
+								<LinkButton
+									href={`/${owner}/${name}/issues`}
 									variant="outline"
 									size="sm"
-									onClick={() => router.push(`/${owner}/${name}/issues`)}
-									disabled={isSubmitting}
+									aria-disabled={isSubmitting}
+									className={
+										isSubmitting ? "pointer-events-none opacity-50" : ""
+									}
 								>
 									Cancel
-								</Button>
+								</LinkButton>
 								<Button
 									size="sm"
 									disabled={title.trim().length === 0 || isSubmitting}

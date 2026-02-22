@@ -10,8 +10,9 @@ import {
 import { SearchIcon } from "@packages/ui/components/icons";
 import { cn } from "@packages/ui/lib/utils";
 import { Command as CommandPrimitive } from "cmdk";
+import { useRouter } from "next/navigation";
 import type * as React from "react";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { Link } from "./link";
 
 function Command({
@@ -195,8 +196,8 @@ function CommandShortcut({
  * - Real `<a>` tag (right-click → copy link, middle-click → new tab, cmd+click)
  * - Accessible link semantics
  *
- * On keyboard Enter (cmdk `onSelect`), we programmatically click the link.
- * On mouse interactions, the Link handles navigation directly.
+ * On keyboard Enter (cmdk `onSelect`), we use router.push for navigation.
+ * On mouse interactions, the stretched Link handles navigation directly.
  *
  * Pass `onBeforeNavigate` to run side-effects (e.g. close dialog, save recents)
  * before navigation occurs.
@@ -211,14 +212,14 @@ function CommandLinkItem({
 	href: string;
 	onBeforeNavigate?: () => void;
 }) {
-	const linkRef = useRef<HTMLAnchorElement>(null);
+	const router = useRouter();
 
 	const handleSelect = useCallback(() => {
 		onBeforeNavigate?.();
-		// Programmatically click the link so Next.js Link handles the navigation
-		// (this covers keyboard Enter where the mouse never touches the link)
-		linkRef.current?.click();
-	}, [onBeforeNavigate]);
+		// Keyboard Enter path — the Link overlay handles mouse interactions,
+		// but cmdk's onSelect fires for keyboard. Use router.push here.
+		router.push(href);
+	}, [onBeforeNavigate, router, href]);
 
 	return (
 		<CommandPrimitive.Item
@@ -232,16 +233,14 @@ function CommandLinkItem({
 		>
 			{/* Invisible stretched link for prefetch + real anchor semantics */}
 			<Link
-				ref={linkRef}
 				href={href}
 				className="absolute inset-0 z-0"
 				tabIndex={-1}
 				aria-hidden
 				onClick={(event) => {
 					onBeforeNavigate?.();
-					// Let the Link component handle the actual navigation —
-					// don't prevent default here so the <a> click goes through.
-					// But stop propagation so cmdk doesn't also call onSelect.
+					// Stop propagation so cmdk doesn't also call onSelect
+					// (which would cause double navigation).
 					event.stopPropagation();
 				}}
 			>
