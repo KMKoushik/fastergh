@@ -20,7 +20,9 @@ const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL!;
  * Every RPC module and the provider itself must use this same instance
  * so that auth tokens set via `setAuth` are visible everywhere.
  */
-const convexBrowserClient = new ConvexBrowserClient(CONVEX_URL);
+const convexBrowserClient = new ConvexBrowserClient(CONVEX_URL, {
+	unsavedChangesWarning: false,
+});
 
 const convexClientService: ConvexClientService = {
 	query: <Query extends FunctionReference<"query">>(
