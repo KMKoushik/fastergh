@@ -44,6 +44,7 @@ yarn-error.log*
 temp-*
 
 *.env*
+!.env.example
 
 # eslint
 .eslintcache
