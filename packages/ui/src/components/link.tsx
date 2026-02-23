@@ -6,7 +6,6 @@ import type React from "react";
 import {
 	type RefCallback,
 	useCallback,
-	useEffect,
 	useRef,
 	useSyncExternalStore,
 } from "react";
@@ -18,7 +17,6 @@ import {
 import {
 	isQuickHubSpaNavigationEnabled,
 	navigateQuickHubSpa,
-	prefetchQuickHubSpa,
 } from "../lib/spa-navigation";
 import { cn } from "../lib/utils";
 import {
@@ -127,14 +125,10 @@ function InternalLink({
 			return prefetchPromiseRef.current;
 		}
 
-		const isSpaNavigation = isQuickHubSpaNavigationEnabled();
-
 		if (!prefetched.current) {
 			prefetched.current = true;
-			if (!isSpaNavigation) {
+			if (!isQuickHubSpaNavigationEnabled()) {
 				router.prefetch(href);
-			} else {
-				prefetchQuickHubSpa(href);
 			}
 		}
 
@@ -144,14 +138,6 @@ function InternalLink({
 		prefetchPromiseRef.current = prefetchPromise;
 		return prefetchPromise;
 	}, [href, intent, prefetchRequest, router]);
-
-	useEffect(() => {
-		if (!isQuickHubSpaNavigationEnabled()) {
-			return;
-		}
-
-		void triggerPrefetch();
-	}, [triggerPrefetch]);
 
 	const viewportRef = useViewportPrefetch(triggerPrefetch, isTouch);
 
