@@ -2,85 +2,11 @@
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import type React from "react";
-import {
-	type RefCallback,
-	useCallback,
-	useRef,
-	useSyncExternalStore,
-} from "react";
+import { useCallback } from "react";
 import { cn } from "../lib/utils";
 
 function isExternalUrl(href: string): boolean {
 	return href.startsWith("http://") || href.startsWith("https://");
-}
-
-/**
- * Detects if the device has a coarse pointer (touch screen).
- * Uses useSyncExternalStore so all Link instances share one subscription
- * instead of each running their own useState + useEffect.
- */
-function subscribeToPointer(onStoreChange: () => void) {
-	const mql = window.matchMedia("(pointer: coarse)");
-	mql.addEventListener("change", onStoreChange);
-	return () => mql.removeEventListener("change", onStoreChange);
-}
-function getIsTouchDevice() {
-	return window.matchMedia("(pointer: coarse)").matches;
-}
-function getServerSnapshot() {
-	return false;
-}
-function useIsTouchDevice() {
-	return useSyncExternalStore(
-		subscribeToPointer,
-		getIsTouchDevice,
-		getServerSnapshot,
-	);
-}
-
-/**
- * On touch devices, prefetch links when they enter the viewport.
- * Returns a ref callback to attach to the link element.
- */
-function useViewportPrefetch(
-	href: string,
-	enabled: boolean,
-): RefCallback<HTMLAnchorElement> {
-	const router = useRouter();
-	const prefetched = useRef(false);
-	const observerRef = useRef<IntersectionObserver | null>(null);
-
-	return useCallback(
-		(node: HTMLAnchorElement | null) => {
-			if (observerRef.current) {
-				observerRef.current.disconnect();
-				observerRef.current = null;
-			}
-
-			if (!enabled || !node) {
-				return;
-			}
-
-			const observer = new IntersectionObserver(
-				(entries) => {
-					for (const entry of entries) {
-						if (entry.isIntersecting && !prefetched.current) {
-							prefetched.current = true;
-							router.prefetch(href);
-							observer.disconnect();
-							observerRef.current = null;
-							break;
-						}
-					}
-				},
-				{ rootMargin: "200px" },
-			);
-
-			observer.observe(node);
-			observerRef.current = observer;
-		},
-		[enabled, href, router],
-	);
 }
 
 function InternalLink({
@@ -92,17 +18,7 @@ function InternalLink({
 	icon?: React.ReactNode;
 }) {
 	const router = useRouter();
-	const isTouch = useIsTouchDevice();
 	const href = rest.href;
-	const viewportRef = useViewportPrefetch(href, isTouch);
-	const prefetched = useRef(false);
-
-	const handlePointerEnter = useCallback(() => {
-		if (!isTouch && !prefetched.current) {
-			prefetched.current = true;
-			router.prefetch(href);
-		}
-	}, [isTouch, href, router]);
 
 	const handleMouseDown = useCallback(
 		(event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -126,8 +42,7 @@ function InternalLink({
 	const sharedProps = {
 		scroll: true,
 		...rest,
-		prefetch: false,
-		onPointerEnter: handlePointerEnter,
+		prefetch: true,
 		onMouseDown: handleMouseDown,
 	};
 
@@ -135,7 +50,6 @@ function InternalLink({
 		return (
 			<NextLink
 				{...sharedProps}
-				ref={viewportRef}
 				className={cn("flex flex-row items-center gap-2", className)}
 			>
 				{icon}
@@ -145,7 +59,7 @@ function InternalLink({
 	}
 
 	return (
-		<NextLink {...sharedProps} ref={viewportRef} className={className}>
+		<NextLink {...sharedProps} className={className}>
 			{rest.children}
 		</NextLink>
 	);
