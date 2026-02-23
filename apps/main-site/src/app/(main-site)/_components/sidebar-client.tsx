@@ -7,8 +7,8 @@ import { UserButton } from "@packages/ui/components/user-button";
 import { GitHubIcon } from "@packages/ui/icons/index";
 import { authClient } from "@packages/ui/lib/auth-client";
 import type { ReactNode } from "react";
-import { InstallGitHubAppButton } from "../_components/install-github-app-button";
-import { triggerOpenSearchCommand } from "../_components/search-command-events";
+import { InstallGitHubAppButton } from "./install-github-app-button";
+import { triggerOpenSearchCommand } from "./search-command-events";
 
 export type SidebarRepo = {
 	repositoryId: number;

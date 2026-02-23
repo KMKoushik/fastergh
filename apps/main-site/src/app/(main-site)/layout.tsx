@@ -9,10 +9,6 @@ export const metadata: Metadata = {
 	description: "Fast GitHub browsing backed by Convex real-time projections",
 };
 
-function SidebarShellFallback() {
-	return <div className="h-full animate-pulse bg-sidebar/60" />;
-}
-
 function DetailShellFallback() {
 	return <div className="h-full animate-pulse bg-background" />;
 }
@@ -20,27 +16,17 @@ function DetailShellFallback() {
 /**
  * Root layout for the main site.
  *
- * Uses a single `@sidebar` parallel route for the sidebar panel content,
- * resolved automatically by the Next.js router. The sidebar persists across
- * navigations — only the detail panel (children / page.tsx) re-renders.
+ * The sidebar is a fully client-side component — it reads the URL
+ * client-side and renders the appropriate content. No parallel routes,
+ * no server-side Suspense. Navigations never cause the sidebar to flash.
  *
  * `children` maps to `page.tsx` files and renders the main detail content.
  */
-export default function MainSiteLayout({
-	children,
-	sidebar,
-}: {
-	children: ReactNode;
-	sidebar: ReactNode;
-}) {
+export default function MainSiteLayout({ children }: { children: ReactNode }) {
 	return (
 		<Providers>
 			<HubShell
-				sidebar={
-					<Suspense fallback={<SidebarShellFallback />}>
-						<MainSiteSidebar>{sidebar}</MainSiteSidebar>
-					</Suspense>
-				}
+				sidebar={<MainSiteSidebar />}
 				detail={
 					<Suspense fallback={<DetailShellFallback />}>{children}</Suspense>
 				}

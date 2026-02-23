@@ -30,7 +30,7 @@ import { useProjectionQueries } from "@packages/ui/rpc/projection-queries";
 import { Array as Arr, pipe, Record as Rec } from "effect";
 import { useParams, useSelectedLayoutSegments } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
-import type { SidebarRepo } from "../@sidebar/sidebar-client";
+import type { SidebarRepo } from "./sidebar-client";
 
 const EmptyPayload: Record<string, never> = {};
 
