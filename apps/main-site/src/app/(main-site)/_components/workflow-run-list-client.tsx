@@ -162,32 +162,37 @@ function WorkflowRunListLoaded({
 								{run.workflowName ?? `Run #${run.runNumber}`}
 							</span>
 						</div>
-						<div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5 tabular-nums">
-							<span>#{run.runNumber}</span>
-							{run.headBranch && (
-								<>
-									<span className="text-muted-foreground/40">&middot;</span>
-									<code className="text-[9px] bg-muted px-1 rounded">
+						<div className="mt-0.5 space-y-0.5 text-[10px] text-muted-foreground tabular-nums">
+							<div className="flex min-w-0 items-center gap-1.5">
+								<span className="shrink-0">#{run.runNumber}</span>
+								{run.headBranch && (
+									<code className="inline-block max-w-[10rem] truncate rounded bg-muted px-1 text-[9px]">
 										{run.headBranch}
 									</code>
-								</>
-							)}
-							{run.actorLogin && (
-								<>
-									<span className="text-muted-foreground/40">&middot;</span>
-									<span className="flex items-center gap-0.5">
-										<Avatar className="size-3">
-											<AvatarImage src={run.actorAvatarUrl ?? undefined} />
-											<AvatarFallback className="text-[6px]">
-												{run.actorLogin[0]?.toUpperCase()}
-											</AvatarFallback>
-										</Avatar>
-										{run.actorLogin}
-									</span>
-								</>
-							)}
-							<span className="text-muted-foreground/40">&middot;</span>
-							<span>{formatRelative(run.updatedAt)}</span>
+								)}
+								<span className="truncate">{formatEventLabel(run.event)}</span>
+							</div>
+							<div className="flex min-w-0 items-center gap-1.5">
+								{run.actorLogin && (
+									<>
+										<span className="flex min-w-0 items-center gap-0.5">
+											<Avatar className="size-3 shrink-0">
+												<AvatarImage src={run.actorAvatarUrl ?? undefined} />
+												<AvatarFallback className="text-[6px]">
+													{run.actorLogin[0]?.toUpperCase()}
+												</AvatarFallback>
+											</Avatar>
+											<span className="truncate">{run.actorLogin}</span>
+										</span>
+										<span className="text-muted-foreground/40">&middot;</span>
+									</>
+								)}
+								<span className="shrink-0">
+									{formatRelative(run.updatedAt)}
+								</span>
+								<span className="text-muted-foreground/40">&middot;</span>
+								<span className="shrink-0">{formatJobCount(run.jobCount)}</span>
+							</div>
 						</div>
 					</div>
 				</Link>
@@ -220,16 +225,31 @@ function WorkflowRunListLoadingSkeleton() {
 					<Skeleton className="mt-0.5 size-3.5 rounded-full shrink-0" />
 					<div className="min-w-0 flex-1 space-y-1.5">
 						<Skeleton className="h-3 w-2/3 rounded" />
-						<div className="flex items-center gap-1.5">
-							<Skeleton className="h-2.5 w-8 rounded" />
-							<Skeleton className="h-2.5 w-16 rounded" />
-							<Skeleton className="h-2.5 w-12 rounded" />
+						<div className="space-y-1">
+							<div className="flex items-center gap-1.5">
+								<Skeleton className="h-2.5 w-8 rounded" />
+								<Skeleton className="h-2.5 w-16 rounded" />
+								<Skeleton className="h-2.5 w-12 rounded" />
+							</div>
+							<div className="flex items-center gap-1.5">
+								<Skeleton className="h-2.5 w-14 rounded" />
+								<Skeleton className="h-2.5 w-10 rounded" />
+								<Skeleton className="h-2.5 w-8 rounded" />
+							</div>
 						</div>
 					</div>
 				</div>
 			))}
 		</div>
 	);
+}
+
+function formatEventLabel(event: string): string {
+	return event.replaceAll("_", " ");
+}
+
+function formatJobCount(jobCount: number): string {
+	return `${jobCount} ${jobCount === 1 ? "job" : "jobs"}`;
 }
 
 function ConclusionIcon({
