@@ -30,10 +30,10 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// Process pending webhook events every 10 seconds
+// Process pending webhook events every 2 seconds
 crons.interval(
 	"process pending webhook events",
-	{ seconds: 10 },
+	{ seconds: 2 },
 	internal.rpc.webhookProcessor.processAllPending,
 	{},
 );

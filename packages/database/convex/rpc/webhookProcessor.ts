@@ -1535,8 +1535,10 @@ const extractActivityInfo = (
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maximum events to process per batch invocation (stay within mutation budget) */
-const BATCH_SIZE = 50;
+/** Maximum events to process per batch invocation (stay within mutation budget).
+ *  Each event requires multiple index lookups across ~10 tables plus aggregate
+ *  B-tree syncs, so keep this low to stay inside the 1-second mutation timeout. */
+const BATCH_SIZE = 5;
 
 /** Maximum processing attempts before dead-lettering */
 const MAX_ATTEMPTS = 5;
